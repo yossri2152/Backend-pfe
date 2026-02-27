@@ -1,15 +1,87 @@
-const CSVFile = require("../models/CSVFile");
+const File = require("../models/CSVFile"); // Le modèle reste CSVFile pour compatibilité
 const fs = require('fs');
 const path = require('path');
 const csv = require('csv-parser');
 const { Parser } = require('json2csv');
 const readline = require('readline');
+const excelReader = require('../services/excelReader.service');
 
 // ==================== FONCTIONS UTILITAIRES ====================
 
 /**
- * Lire un fichier CSV en streaming
+ * Détecte le type de fichier
  */
+const getFileType = (filename) => {
+  return excelReader.detectFileType(filename);
+};
+
+/**
+ * Lire un fichier en streaming (CSV ou Excel)
+ */
+const streamFile = async (filePath, fileType, startLine = 0, limit = 100) => {
+  if (fileType === 'csv') {
+    return streamCSVFile(filePath, startLine, limit);
+  } else if (fileType === 'excel') {
+    return await excelReader.readExcelFile(filePath, startLine, limit);
+  } else {
+    throw new Error('Type de fichier non supporté');
+  }
+};
+
+/**
+ * Lire tout le fichier
+ */
+const readFullFile = async (filePath, fileType) => {
+  if (fileType === 'csv') {
+    return readFullCSVFile(filePath);
+  } else if (fileType === 'excel') {
+    return await excelReader.readFullExcelFile(filePath);
+  } else {
+    throw new Error('Type de fichier non supporté');
+  }
+};
+
+/**
+ * Écrire des données dans un fichier
+ */
+const writeFile = async (filePath, data, headers, fileType) => {
+  if (fileType === 'csv') {
+    await writeCSVFile(filePath, data, headers);
+  } else if (fileType === 'excel') {
+    await excelReader.writeExcelFile(filePath, data, headers);
+  } else {
+    throw new Error('Type de fichier non supporté');
+  }
+};
+
+/**
+ * Compter les lignes
+ */
+const countFileLines = async (filePath, fileType) => {
+  if (fileType === 'csv') {
+    return countCSVLines(filePath);
+  } else if (fileType === 'excel') {
+    return await excelReader.countExcelLines(filePath);
+  } else {
+    return 0;
+  }
+};
+
+/**
+ * Lire les en-têtes
+ */
+const readFileHeaders = async (filePath, fileType) => {
+  if (fileType === 'csv') {
+    return readCSVHeaders(filePath);
+  } else if (fileType === 'excel') {
+    return await excelReader.readExcelHeaders(filePath);
+  } else {
+    return [];
+  }
+};
+
+// ==================== FONCTIONS CSV EXISTANTES ====================
+
 const streamCSVFile = (filePath, startLine = 0, limit = 100) => {
   return new Promise((resolve, reject) => {
     const results = [];
@@ -32,9 +104,6 @@ const streamCSVFile = (filePath, startLine = 0, limit = 100) => {
   });
 };
 
-/**
- * Lire tout le fichier CSV (pour les modifications)
- */
 const readFullCSVFile = (filePath) => {
   return new Promise((resolve, reject) => {
     const results = [];
@@ -46,18 +115,12 @@ const readFullCSVFile = (filePath) => {
   });
 };
 
-/**
- * Écrire des données dans un fichier CSV
- */
 const writeCSVFile = async (filePath, data, headers) => {
   const json2csvParser = new Parser({ fields: headers });
   const csv = json2csvParser.parse(data);
   fs.writeFileSync(filePath, csv);
 };
 
-/**
- * Compter les lignes d'un fichier CSV
- */
 const countCSVLines = (filePath) => {
   return new Promise((resolve, reject) => {
     let lineCount = 0;
@@ -78,9 +141,6 @@ const countCSVLines = (filePath) => {
   });
 };
 
-/**
- * Lire les en-têtes d'un fichier CSV
- */
 const readCSVHeaders = (filePath) => {
   return new Promise((resolve, reject) => {
     let headersRead = false;
@@ -99,14 +159,14 @@ const readCSVHeaders = (filePath) => {
   });
 };
 
-// ==================== CRUD FICHIERS AVEC WEBSOCKET ====================
+// ==================== CRUD FICHIERS ====================
 
 /**
- * GET /csv - Obtenir les fichiers CSV de l'utilisateur connecté
+ * GET /csv - Obtenir les fichiers de l'utilisateur connecté
  */
 exports.getUserCSVFiles = async (req, res) => {
   try {
-    const files = await CSVFile.find({ createdBy: req.user.userId })
+    const files = await File.find({ createdBy: req.user.userId })
       .select('-__v')
       .populate('createdBy', 'email nom prenom')
       .sort({ createdAt: -1 });
@@ -121,6 +181,7 @@ exports.getUserCSVFiles = async (req, res) => {
         size: f.size,
         rowCount: f.rowCount,
         headers: f.headers,
+        fileType: f.fileType,
         createdAt: f.createdAt,
         updatedAt: f.updatedAt,
         createdBy: f.createdBy ? {
@@ -132,7 +193,7 @@ exports.getUserCSVFiles = async (req, res) => {
       }))
     });
   } catch (error) {
-    console.error('❌ Erreur get CSV files:', error);
+    console.error('❌ Erreur get files:', error);
     res.status(500).json({
       success: false,
       message: "Erreur serveur"
@@ -141,11 +202,11 @@ exports.getUserCSVFiles = async (req, res) => {
 };
 
 /**
- * GET /csv/all - Obtenir tous les fichiers CSV (admin uniquement)
+ * GET /csv/all - Obtenir tous les fichiers (admin uniquement)
  */
 exports.getAllCSVFiles = async (req, res) => {
   try {
-    const files = await CSVFile.find()
+    const files = await File.find()
       .select('-__v')
       .populate('createdBy', 'email nom prenom')
       .sort({ createdAt: -1 });
@@ -160,6 +221,7 @@ exports.getAllCSVFiles = async (req, res) => {
         size: f.size,
         rowCount: f.rowCount,
         headers: f.headers,
+        fileType: f.fileType,
         createdAt: f.createdAt,
         updatedAt: f.updatedAt,
         createdBy: f.createdBy ? {
@@ -171,7 +233,7 @@ exports.getAllCSVFiles = async (req, res) => {
       }))
     });
   } catch (error) {
-    console.error('❌ Erreur get all CSV files:', error);
+    console.error('❌ Erreur get all files:', error);
     res.status(500).json({
       success: false,
       message: "Erreur serveur"
@@ -186,12 +248,11 @@ exports.getCSVFileInfo = async (req, res) => {
   try {
     let query = { _id: req.params.id };
     
-    // Si ce n'est pas un admin, il ne voit que ses fichiers
     if (req.user.role !== 'admin') {
       query.createdBy = req.user.userId;
     }
 
-    const file = await CSVFile.findOne(query)
+    const file = await File.findOne(query)
       .select('-__v')
       .populate('createdBy', 'email nom prenom');
 
@@ -202,7 +263,6 @@ exports.getCSVFileInfo = async (req, res) => {
       });
     }
 
-    // Déterminer si l'utilisateur peut modifier ce fichier
     const canEdit = req.user.role === 'responsable' && file.createdBy._id.toString() === req.user.userId;
 
     res.json({
@@ -214,6 +274,7 @@ exports.getCSVFileInfo = async (req, res) => {
         size: file.size,
         rowCount: file.rowCount,
         headers: file.headers,
+        fileType: file.fileType,
         createdAt: file.createdAt,
         updatedAt: file.updatedAt,
         chunkSize: file.chunkSize || 1000,
@@ -228,7 +289,7 @@ exports.getCSVFileInfo = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('❌ Erreur get CSV file info:', error);
+    console.error('❌ Erreur get file info:', error);
     res.status(500).json({
       success: false,
       message: "Erreur serveur"
@@ -247,12 +308,11 @@ exports.getCSVFileData = async (req, res) => {
 
     let query = { _id: req.params.id };
     
-    // Si ce n'est pas un admin, il ne voit que ses fichiers
     if (req.user.role !== 'admin') {
       query.createdBy = req.user.userId;
     }
 
-    const file = await CSVFile.findOne(query);
+    const file = await File.findOne(query);
 
     if (!file) {
       return res.status(404).json({
@@ -269,9 +329,8 @@ exports.getCSVFileData = async (req, res) => {
     }
 
     const startLine = (pageNum - 1) * limitNum;
-    const result = await streamCSVFile(file.path, startLine, limitNum);
+    const result = await streamFile(file.path, file.fileType, startLine, limitNum);
 
-    // Déterminer si l'utilisateur peut modifier ce fichier
     const canEdit = req.user.role === 'responsable' && file.createdBy.toString() === req.user.userId;
 
     res.json({
@@ -286,11 +345,12 @@ exports.getCSVFileData = async (req, res) => {
           totalPages: Math.ceil(result.total / limitNum),
           hasMore: result.hasMore
         },
-        canEdit
+        canEdit,
+        fileType: file.fileType
       }
     });
   } catch (error) {
-    console.error('❌ Erreur get CSV file data:', error);
+    console.error('❌ Erreur get file data:', error);
     res.status(500).json({
       success: false,
       message: "Erreur serveur"
@@ -299,7 +359,7 @@ exports.getCSVFileData = async (req, res) => {
 };
 
 /**
- * POST /csv/upload - Uploader un nouveau fichier CSV
+ * POST /csv/upload - Uploader un nouveau fichier (CSV ou Excel)
  */
 exports.uploadCSVFile = async (req, res) => {
   try {
@@ -310,17 +370,27 @@ exports.uploadCSVFile = async (req, res) => {
       });
     }
 
-    const headers = await readCSVHeaders(req.file.path);
-    const rowCount = await countCSVLines(req.file.path);
+    const fileType = getFileType(req.file.originalname);
+    
+    if (fileType === 'unknown') {
+      return res.status(400).json({
+        success: false,
+        message: "Type de fichier non supporté. Utilisez CSV ou Excel (.xlsx, .xls)"
+      });
+    }
+
+    const headers = await readFileHeaders(req.file.path, fileType);
+    const rowCount = await countFileLines(req.file.path, fileType);
     const chunkSize = 1000;
     const totalChunks = Math.ceil(rowCount / chunkSize);
 
-    const csvFile = new CSVFile({
+    const file = new File({
       filename: req.file.filename,
       originalName: req.file.originalname,
       path: req.file.path,
       size: req.file.size,
       mimeType: req.file.mimetype,
+      fileType: fileType,
       headers: headers,
       rowCount: rowCount,
       chunkSize: chunkSize,
@@ -328,13 +398,11 @@ exports.uploadCSVFile = async (req, res) => {
       createdBy: req.user.userId
     });
 
-    await csvFile.save();
+    await file.save();
 
-    // Récupérer le fichier avec les infos de l'utilisateur pour l'emit
-    const savedFile = await CSVFile.findById(csvFile._id)
+    const savedFile = await File.findById(file._id)
       .populate('createdBy', 'email nom prenom');
 
-    // Émettre un événement WebSocket pour informer tous les clients
     if (req.io) {
       req.io.emit('file:uploaded', {
         file: {
@@ -344,6 +412,7 @@ exports.uploadCSVFile = async (req, res) => {
           size: savedFile.size,
           rowCount: savedFile.rowCount,
           headers: savedFile.headers,
+          fileType: savedFile.fileType,
           createdAt: savedFile.createdAt,
           createdBy: savedFile.createdBy ? {
             _id: savedFile.createdBy._id,
@@ -362,23 +431,24 @@ exports.uploadCSVFile = async (req, res) => {
       });
     }
 
-    console.log(`✅ Fichier uploadé: ${csvFile.originalName} par ${req.user.email} (${req.user.role})`);
+    console.log(`✅ Fichier ${fileType.toUpperCase()} uploadé: ${file.originalName} par ${req.user.email}`);
 
     res.status(201).json({
       success: true,
-      message: "Fichier uploadé avec succès",
+      message: `Fichier ${fileType.toUpperCase()} uploadé avec succès`,
       data: {
-        _id: csvFile._id,
-        filename: csvFile.filename,
-        originalName: csvFile.originalName,
-        headers: csvFile.headers,
-        rowCount: csvFile.rowCount,
-        totalChunks: csvFile.totalChunks,
-        createdAt: csvFile.createdAt
+        _id: file._id,
+        filename: file.filename,
+        originalName: file.originalName,
+        headers: file.headers,
+        rowCount: file.rowCount,
+        fileType: file.fileType,
+        totalChunks: file.totalChunks,
+        createdAt: file.createdAt
       }
     });
   } catch (error) {
-    console.error('❌ Erreur upload CSV:', error);
+    console.error('❌ Erreur upload:', error);
     
     if (req.file && req.file.path) {
       fs.unlinkSync(req.file.path);
@@ -392,12 +462,11 @@ exports.uploadCSVFile = async (req, res) => {
 };
 
 /**
- * PUT /csv/:id - Mettre à jour un fichier CSV (remplacer)
- * Uniquement pour responsable et propriétaire
+ * PUT /csv/:id - Mettre à jour un fichier (remplacer)
  */
 exports.updateCSVFile = async (req, res) => {
   try {
-    const file = await CSVFile.findOne({
+    const file = await File.findOne({
       _id: req.params.id,
       createdBy: req.user.userId
     });
@@ -416,20 +485,27 @@ exports.updateCSVFile = async (req, res) => {
       });
     }
 
-    // Supprimer l'ancien fichier physique
+    const fileType = getFileType(req.file.originalname);
+    
+    if (fileType === 'unknown') {
+      return res.status(400).json({
+        success: false,
+        message: "Type de fichier non supporté"
+      });
+    }
+
     if (fs.existsSync(file.path)) {
       fs.unlinkSync(file.path);
     }
 
-    // Lire le nouveau fichier
-    const headers = await readCSVHeaders(req.file.path);
-    const rowCount = await countCSVLines(req.file.path);
+    const headers = await readFileHeaders(req.file.path, fileType);
+    const rowCount = await countFileLines(req.file.path, fileType);
 
-    // Mettre à jour l'entrée dans la base de données
     file.filename = req.file.filename;
     file.originalName = req.file.originalname;
     file.path = req.file.path;
     file.size = req.file.size;
+    file.fileType = fileType;
     file.headers = headers;
     file.rowCount = rowCount;
     file.updatedAt = new Date();
@@ -447,11 +523,12 @@ exports.updateCSVFile = async (req, res) => {
         originalName: file.originalName,
         headers: file.headers,
         rowCount: file.rowCount,
+        fileType: file.fileType,
         updatedAt: file.updatedAt
       }
     });
   } catch (error) {
-    console.error('❌ Erreur update CSV:', error);
+    console.error('❌ Erreur update:', error);
     
     if (req.file && req.file.path) {
       fs.unlinkSync(req.file.path);
@@ -465,11 +542,11 @@ exports.updateCSVFile = async (req, res) => {
 };
 
 /**
- * DELETE /csv/:id - Supprimer un fichier CSV (uniquement responsable et propriétaire)
+ * DELETE /csv/:id - Supprimer un fichier
  */
 exports.deleteCSVFile = async (req, res) => {
   try {
-    const file = await CSVFile.findOne({
+    const file = await File.findOne({
       _id: req.params.id,
       createdBy: req.user.userId
     }).populate('createdBy', 'email nom prenom');
@@ -481,10 +558,10 @@ exports.deleteCSVFile = async (req, res) => {
       });
     }
 
-    // Sauvegarder les infos pour l'événement
     const fileInfo = {
       _id: file._id,
       originalName: file.originalName,
+      fileType: file.fileType,
       createdBy: file.createdBy ? {
         _id: file.createdBy._id,
         email: file.createdBy.email,
@@ -493,15 +570,12 @@ exports.deleteCSVFile = async (req, res) => {
       } : null
     };
 
-    // Supprimer le fichier physique
     if (fs.existsSync(file.path)) {
       fs.unlinkSync(file.path);
     }
 
-    // Supprimer l'entrée de la base de données
     await file.deleteOne();
 
-    // Émettre un événement WebSocket pour informer tous les clients
     if (req.io) {
       req.io.emit('file:deleted', {
         fileId: file._id,
@@ -524,7 +598,7 @@ exports.deleteCSVFile = async (req, res) => {
       message: "Fichier supprimé avec succès"
     });
   } catch (error) {
-    console.error('❌ Erreur delete CSV:', error);
+    console.error('❌ Erreur delete:', error);
     res.status(500).json({
       success: false,
       message: "Erreur serveur"
@@ -533,18 +607,17 @@ exports.deleteCSVFile = async (req, res) => {
 };
 
 /**
- * GET /csv/:id/download - Télécharger un fichier CSV
+ * GET /csv/:id/download - Télécharger un fichier
  */
 exports.downloadCSVFile = async (req, res) => {
   try {
     let query = { _id: req.params.id };
     
-    // Si ce n'est pas un admin, il ne peut télécharger que ses fichiers
     if (req.user.role !== 'admin') {
       query.createdBy = req.user.userId;
     }
 
-    const file = await CSVFile.findOne(query);
+    const file = await File.findOne(query);
 
     if (!file) {
       return res.status(404).json({
@@ -560,11 +633,11 @@ exports.downloadCSVFile = async (req, res) => {
       });
     }
 
-    console.log(`📥 Téléchargement: ${file.originalName} par ${req.user.email} (${req.user.role})`);
+    console.log(`📥 Téléchargement: ${file.originalName} (${file.fileType}) par ${req.user.email}`);
 
     res.download(file.path, file.originalName);
   } catch (error) {
-    console.error('❌ Erreur download CSV:', error);
+    console.error('❌ Erreur download:', error);
     res.status(500).json({
       success: false,
       message: "Erreur serveur"
@@ -572,14 +645,14 @@ exports.downloadCSVFile = async (req, res) => {
   }
 };
 
-// ==================== CRUD LIGNES AVEC WEBSOCKET (UNIQUEMENT POUR RESPONSABLE PROPRIÉTAIRE) ====================
+// ==================== CRUD LIGNES ====================
 
 /**
  * POST /csv/:id/rows - Ajouter une nouvelle ligne
  */
 exports.addRow = async (req, res) => {
   try {
-    const file = await CSVFile.findOne({
+    const file = await File.findOne({
       _id: req.params.id,
       createdBy: req.user.userId
     }).populate('createdBy', 'email nom prenom');
@@ -600,7 +673,6 @@ exports.addRow = async (req, res) => {
 
     const newRow = req.body;
     
-    // Vérifier que la nouvelle ligne a toutes les clés nécessaires
     const missingHeaders = file.headers.filter(h => !(h in newRow));
     if (missingHeaders.length > 0) {
       return res.status(400).json({
@@ -609,21 +681,16 @@ exports.addRow = async (req, res) => {
       });
     }
 
-    // Lire toutes les données existantes
-    const allData = await readFullCSVFile(file.path);
+    const allData = await readFullFile(file.path, file.fileType);
     
-    // Ajouter la nouvelle ligne
     allData.push(newRow);
     
-    // Réécrire le fichier avec la nouvelle ligne
-    await writeCSVFile(file.path, allData, file.headers);
+    await writeFile(file.path, allData, file.headers, file.fileType);
     
-    // Mettre à jour le compteur de lignes
     file.rowCount = allData.length;
     file.updatedAt = new Date();
     await file.save();
 
-    // Émettre un événement WebSocket
     if (req.io) {
       req.io.emit('row:added', {
         fileId: file._id,
@@ -640,8 +707,6 @@ exports.addRow = async (req, res) => {
       });
     }
 
-    console.log(`✅ Ligne ajoutée au fichier ${file.originalName} par ${req.user.email}`);
-
     res.json({
       success: true,
       message: "Ligne ajoutée avec succès",
@@ -657,11 +722,11 @@ exports.addRow = async (req, res) => {
 };
 
 /**
- * PUT /csv/:id/rows/:rowIndex - Modifier une ligne existante
+ * PUT /csv/:id/rows/:rowIndex - Modifier une ligne
  */
 exports.updateRow = async (req, res) => {
   try {
-    const file = await CSVFile.findOne({
+    const file = await File.findOne({
       _id: req.params.id,
       createdBy: req.user.userId
     }).populate('createdBy', 'email nom prenom');
@@ -683,10 +748,8 @@ exports.updateRow = async (req, res) => {
     const rowIndex = parseInt(req.params.rowIndex);
     const updatedRow = req.body;
 
-    // Lire toutes les données
-    const allData = await readFullCSVFile(file.path);
+    const allData = await readFullFile(file.path, file.fileType);
     
-    // Vérifier que l'index est valide
     if (rowIndex < 0 || rowIndex >= allData.length) {
       return res.status(400).json({
         success: false,
@@ -694,7 +757,6 @@ exports.updateRow = async (req, res) => {
       });
     }
 
-    // Vérifier les en-têtes
     const missingHeaders = file.headers.filter(h => !(h in updatedRow));
     if (missingHeaders.length > 0) {
       return res.status(400).json({
@@ -703,20 +765,14 @@ exports.updateRow = async (req, res) => {
       });
     }
 
-    // Sauvegarder l'ancienne valeur pour l'événement
     const oldRow = { ...allData[rowIndex] };
-
-    // Mettre à jour la ligne
     allData[rowIndex] = updatedRow;
     
-    // Réécrire le fichier
-    await writeCSVFile(file.path, allData, file.headers);
+    await writeFile(file.path, allData, file.headers, file.fileType);
     
-    // Mettre à jour la date
     file.updatedAt = new Date();
     await file.save();
 
-    // Émettre un événement WebSocket
     if (req.io) {
       req.io.emit('row:updated', {
         fileId: file._id,
@@ -733,8 +789,6 @@ exports.updateRow = async (req, res) => {
         timestamp: new Date()
       });
     }
-
-    console.log(`✅ Ligne ${rowIndex} modifiée dans ${file.originalName} par ${req.user.email}`);
 
     res.json({
       success: true,
@@ -755,7 +809,7 @@ exports.updateRow = async (req, res) => {
  */
 exports.deleteRow = async (req, res) => {
   try {
-    const file = await CSVFile.findOne({
+    const file = await File.findOne({
       _id: req.params.id,
       createdBy: req.user.userId
     }).populate('createdBy', 'email nom prenom');
@@ -776,10 +830,8 @@ exports.deleteRow = async (req, res) => {
 
     const rowIndex = parseInt(req.params.rowIndex);
 
-    // Lire toutes les données
-    const allData = await readFullCSVFile(file.path);
+    const allData = await readFullFile(file.path, file.fileType);
     
-    // Vérifier l'index
     if (rowIndex < 0 || rowIndex >= allData.length) {
       return res.status(400).json({
         success: false,
@@ -787,21 +839,15 @@ exports.deleteRow = async (req, res) => {
       });
     }
 
-    // Sauvegarder la ligne supprimée pour l'événement
     const deletedRow = allData[rowIndex];
-
-    // Supprimer la ligne
     allData.splice(rowIndex, 1);
     
-    // Réécrire le fichier
-    await writeCSVFile(file.path, allData, file.headers);
+    await writeFile(file.path, allData, file.headers, file.fileType);
     
-    // Mettre à jour le compteur
     file.rowCount = allData.length;
     file.updatedAt = new Date();
     await file.save();
 
-    // Émettre un événement WebSocket
     if (req.io) {
       req.io.emit('row:deleted', {
         fileId: file._id,
@@ -817,8 +863,6 @@ exports.deleteRow = async (req, res) => {
         timestamp: new Date()
       });
     }
-
-    console.log(`✅ Ligne ${rowIndex} supprimée de ${file.originalName} par ${req.user.email}`);
 
     res.json({
       success: true,

@@ -16,16 +16,25 @@ const storage = multer.diskStorage({
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
     const ext = path.extname(file.originalname);
-    cb(null, file.fieldname + "-" + uniqueSuffix + ext);
+    cb(null, "file-" + uniqueSuffix + ext);
   }
 });
 
-// Filtrer les fichiers (uniquement CSV)
+// Filtrer les fichiers (CSV et Excel)
 const fileFilter = (req, file, cb) => {
-  if (file.mimetype === "text/csv" || file.originalname.endsWith(".csv")) {
+  const allowedMimes = [
+    'text/csv',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  ];
+  const allowedExt = ['.csv', '.xls', '.xlsx'];
+  
+  const ext = path.extname(file.originalname).toLowerCase();
+  
+  if (allowedMimes.includes(file.mimetype) || allowedExt.includes(ext)) {
     cb(null, true);
   } else {
-    cb(new Error("Seuls les fichiers CSV sont autorisés"), false);
+    cb(new Error("Seuls les fichiers CSV et Excel (.xls, .xlsx) sont autorisés"), false);
   }
 };
 
@@ -34,7 +43,7 @@ const upload = multer({
   storage: storage,
   fileFilter: fileFilter,
   limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB max
+    fileSize: 50 * 1024 * 1024 // 50MB max
   }
 });
 

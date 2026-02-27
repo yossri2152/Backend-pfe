@@ -52,6 +52,12 @@ router.get(
   analysisController.generateLotPDF
 );
 
+// Ajouter cette route
+router.get(
+  "/lot/:lotId/pdf",
+  authenticateUser,
+  analysisController.downloadLotPDF
+);
 // ==================== ROUTES DE PUBLICATION (responsable uniquement) ====================
 
 // PUBLIER un rapport pour le rendre visible aux clients

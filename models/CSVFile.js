@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
 
-const CSVFileSchema = new mongoose.Schema({
+const FileSchema = new mongoose.Schema({
   filename: {
     type: String,
     required: true
@@ -20,6 +20,11 @@ const CSVFileSchema = new mongoose.Schema({
   mimeType: {
     type: String,
     default: 'text/csv'
+  },
+  fileType: {
+    type: String,
+    enum: ['csv', 'excel', 'unknown'],
+    default: 'unknown'
   },
   headers: [{
     type: String
@@ -53,4 +58,4 @@ const CSVFileSchema = new mongoose.Schema({
   timestamps: true
 });
 
-module.exports = mongoose.model("CSVFile", CSVFileSchema);
+module.exports = mongoose.model("File", FileSchema);

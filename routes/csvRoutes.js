@@ -3,11 +3,16 @@ const router = express.Router();
 const csvController = require("../controllers/csvController");
 const { authenticateUser, verifyRole } = require("../middleware/authMiddleware");
 const upload = require("../middlewares/upload");
+const CSVFile = require("../models/CSVFile");
 
-// Middleware pour vérifier que l'utilisateur est propriétaire du fichier (pour les modifications)
+// ==================== MIDDLEWARE DE VÉRIFICATION ====================
+
+/**
+ * Middleware pour vérifier que l'utilisateur est propriétaire du fichier
+ * Uniquement pour les opérations de modification (PUT, DELETE, manipulation de lignes)
+ */
 const checkFileOwnership = async (req, res, next) => {
   try {
-    const CSVFile = require("../models/CSVFile");
     const file = await CSVFile.findById(req.params.id);
     
     if (!file) {
@@ -21,7 +26,7 @@ const checkFileOwnership = async (req, res, next) => {
     if (req.user.role === 'admin') {
       return res.status(403).json({
         success: false,
-        message: "Les administrateurs ne peuvent pas modifier les fichiers"
+        message: "Les administrateurs ne peuvent pas modifier les fichiers. Ils ont un accès en lecture seule."
       });
     }
 
@@ -29,74 +34,185 @@ const checkFileOwnership = async (req, res, next) => {
     if (file.createdBy.toString() !== req.user.userId) {
       return res.status(403).json({
         success: false,
-        message: "Vous n'avez pas les droits pour modifier ce fichier"
+        message: "Vous n'avez pas les droits pour modifier ce fichier. Seul le propriétaire peut le modifier."
       });
     }
 
+    // Stocker le propriétaire pour usage ultérieur
     req.fileOwner = file.createdBy.toString();
     next();
   } catch (error) {
     console.error('❌ Erreur checkFileOwnership:', error);
     res.status(500).json({
       success: false,
-      message: "Erreur serveur"
+      message: "Erreur serveur lors de la vérification des droits"
     });
   }
 };
 
-// Toutes les routes CSV nécessitent une authentification
+/**
+ * Middleware pour vérifier que l'utilisateur peut voir le fichier
+ * Admin voit tout, responsable ne voit que ses fichiers
+ */
+const checkFileAccess = async (req, res, next) => {
+  try {
+    const file = await CSVFile.findById(req.params.id);
+    
+    if (!file) {
+      return res.status(404).json({
+        success: false,
+        message: "Fichier non trouvé"
+      });
+    }
+
+    // Admin peut voir tous les fichiers
+    if (req.user.role === 'admin') {
+      return next();
+    }
+
+    // Responsable ne voit que ses fichiers
+    if (file.createdBy.toString() !== req.user.userId) {
+      return res.status(403).json({
+        success: false,
+        message: "Vous n'avez pas accès à ce fichier"
+      });
+    }
+
+    next();
+  } catch (error) {
+    console.error('❌ Erreur checkFileAccess:', error);
+    res.status(500).json({
+      success: false,
+      message: "Erreur serveur lors de la vérification des droits"
+    });
+  }
+};
+
+// ==================== TOUTES LES ROUTES NÉCESSITENT UNE AUTHENTIFICATION ====================
 router.use(authenticateUser);
 
 // ==================== ROUTES SPÉCIFIQUES (doivent être avant les routes avec paramètres) ====================
 
-// Route pour admin : obtenir tous les fichiers CSV de tous les utilisateurs
+/**
+ * GET /csv/all - Obtenir tous les fichiers CSV (admin uniquement)
+ * Permet à l'admin de voir tous les fichiers uploadés par tous les utilisateurs
+ */
 router.get("/all", verifyRole("admin"), csvController.getAllCSVFiles);
 
-// ==================== ROUTES POUR RESPONSABLE ET ADMIN ====================
-
-// Obtenir ses propres fichiers CSV (pour responsable) ou tous les siens (pour admin via /all)
+/**
+ * GET /csv/ - Obtenir ses propres fichiers
+ * Responsable : voit ses fichiers
+ * Admin : utilise /all pour tout voir
+ */
 router.get("/", verifyRole("responsable", "admin"), csvController.getUserCSVFiles);
 
-// Obtenir les informations d'un fichier
-router.get("/:id/info", verifyRole("responsable", "admin"), csvController.getCSVFileInfo);
+// ==================== ROUTES DE LECTURE (accessibles à responsable et admin) ====================
 
-// Obtenir les données paginées d'un fichier
-router.get("/:id/data", verifyRole("responsable", "admin"), csvController.getCSVFileData);
+/**
+ * GET /csv/:id/info - Obtenir les informations d'un fichier
+ * Accessible à : responsable (ses fichiers), admin (tous)
+ */
+router.get(
+  "/:id/info",
+  verifyRole("responsable", "admin"),
+  checkFileAccess,
+  csvController.getCSVFileInfo
+);
 
-// Uploader un nouveau fichier CSV (accessible aux deux)
+/**
+ * GET /csv/:id/data - Obtenir les données paginées d'un fichier
+ * Accessible à : responsable (ses fichiers), admin (tous)
+ */
+router.get(
+  "/:id/data",
+  verifyRole("responsable", "admin"),
+  checkFileAccess,
+  csvController.getCSVFileData
+);
+
+/**
+ * GET /csv/:id/download - Télécharger un fichier
+ * Accessible à : responsable (ses fichiers), admin (tous)
+ */
+router.get(
+  "/:id/download",
+  verifyRole("responsable", "admin"),
+  checkFileAccess,
+  csvController.downloadCSVFile
+);
+
+// ==================== ROUTES D'UPLOAD (accessibles à responsable et admin) ====================
+
+/**
+ * POST /csv/upload - Uploader un nouveau fichier (CSV ou Excel)
+ * Accessible à : responsable, admin
+ * Admin peut uploader des fichiers qui seront visibles par tous
+ */
 router.post(
   "/upload",
   verifyRole("responsable", "admin"),
-  upload.single("csvFile"),
+  upload.single("file"),
   csvController.uploadCSVFile
 );
 
-// Télécharger un fichier CSV (accessible aux deux)
-router.get("/:id/download", verifyRole("responsable", "admin"), csvController.downloadCSVFile);
+// ==================== ROUTES DE MODIFICATION (uniquement responsable et propriétaire) ====================
 
-// ==================== ROUTES POUR RESPONSABLE UNIQUEMENT (modification) ====================
-
-// Mettre à jour un fichier CSV (remplacer) - uniquement responsable et propriétaire
+/**
+ * PUT /csv/:id - Mettre à jour un fichier (remplacer)
+ * Uniquement : responsable et propriétaire du fichier
+ */
 router.put(
   "/:id",
   verifyRole("responsable"),
   checkFileOwnership,
-  upload.single("csvFile"),
+  upload.single("file"),
   csvController.updateCSVFile
 );
 
-// Supprimer un fichier CSV - uniquement responsable et propriétaire
-router.delete("/:id", verifyRole("responsable"), checkFileOwnership, csvController.deleteCSVFile);
+/**
+ * DELETE /csv/:id - Supprimer un fichier
+ * Uniquement : responsable et propriétaire du fichier
+ */
+router.delete(
+  "/:id",
+  verifyRole("responsable"),
+  checkFileOwnership,
+  csvController.deleteCSVFile
+);
 
-// ==================== ROUTES POUR MANIPULATION DES LIGNES (uniquement responsable et propriétaire) ====================
+// ==================== ROUTES DE MANIPULATION DES LIGNES (uniquement responsable et propriétaire) ====================
 
-// Ajouter une ligne - uniquement responsable et propriétaire
-router.post("/:id/rows", verifyRole("responsable"), checkFileOwnership, csvController.addRow);
+/**
+ * POST /csv/:id/rows - Ajouter une nouvelle ligne
+ * Uniquement : responsable et propriétaire du fichier
+ */
+router.post(
+  "/:id/rows",
+  verifyRole("responsable"),
+  checkFileOwnership,
+  csvController.addRow
+);
 
-// Modifier une ligne - uniquement responsable et propriétaire
-router.put("/:id/rows/:rowIndex", verifyRole("responsable"), checkFileOwnership, csvController.updateRow);
+/**
+ * PUT /csv/:id/rows/:rowIndex - Modifier une ligne existante
+ * Uniquement : responsable et propriétaire du fichier
+ */
+router.put(
+  "/:id/rows/:rowIndex",
+  verifyRole("responsable"),
+  checkFileOwnership,
+  csvController.updateRow
+);
 
-// Supprimer une ligne - uniquement responsable et propriétaire
-router.delete("/:id/rows/:rowIndex", verifyRole("responsable"), checkFileOwnership, csvController.deleteRow);
+/**
+ * DELETE /csv/:id/rows/:rowIndex - Supprimer une ligne
+ * Uniquement : responsable et propriétaire du fichier
+ */
+router.delete(
+  "/:id/rows/:rowIndex",
+  verifyRole("responsable"),
+  checkFileOwnership,
+  csvController.deleteRow
+);
 
 module.exports = router;

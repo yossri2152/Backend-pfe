@@ -2,278 +2,475 @@ const axios = require('axios');
 const ollamaService = require('./ollama.service');
 
 class AnalysisService {
+  
   /**
-   * Analyse un lot de tomates
+   * Valide l'année (doit être 2026)
    */
-  analyzeTomatoLot(lot) {
-    const issues = [];
-    const details = {};
-
-    // Température: 12-20°C
-    if (lot.temperature < 12) {
-      issues.push(`🌡️ Froid physiologique (${lot.temperature}°C < 12°C)`);
-      details.temperature = "critique_bas";
-    } else if (lot.temperature > 20) {
-      issues.push(`🌡️ Température trop élevée (${lot.temperature}°C > 20°C) - ramollissement`);
-      details.temperature = "critique_haut";
-    } else {
-      details.temperature = "optimal";
-    }
-
-    // Humidité: 80-90%
-    if (lot.humidity < 80) {
-      issues.push(`💧 Humidité trop basse (${lot.humidity}% < 80%) - risque dessèchement`);
-      details.humidity = "critique_bas";
-    } else if (lot.humidity > 90) {
-      issues.push(`💧 Humidité trop élevée (${lot.humidity}% > 90%) - risque condensation`);
-      details.humidity = "critique_haut";
-    } else {
-      details.humidity = "optimal";
-    }
-
-    // Durée: ≤7 jours
-    if (lot.duration > 7) {
-      issues.push(`⏱️ Durée excessive (${lot.duration} jours > 7 jours) - moisissure`);
-      details.duration = "critique";
-    } else {
-      details.duration = "optimal";
-    }
-
-    // Exposition soleil: ≤30 min
-    if (lot.sunExposure > 30) {
-      issues.push(`☀️ Exposition soleil excessive (${lot.sunExposure} min > 30 min)`);
-      details.sunExposure = "critique";
-    } else {
-      details.sunExposure = "optimal";
-    }
-
-    // Ventilation: Moyenne (anti-condensation)
-    const vent = lot.ventilation ? lot.ventilation.toLowerCase() : '';
-    if (!vent.includes('moyenne') && !vent.includes('anti-condensation')) {
-      issues.push(`🌀 Ventilation inadéquate (${lot.ventilation}) - risque condensation`);
-      details.ventilation = "critique";
-    } else {
-      details.ventilation = "optimal";
-    }
-
-    // Choc: Très sensible (aucun choc fort)
-    if (lot.shock && parseFloat(lot.shock) > 0.5) {
-      issues.push(`🚛 Choc fort détecté (niveau ${lot.shock}) - ecchymoses internes`);
-      details.shock = "critique";
-    } else {
-      details.shock = "optimal";
-    }
-
-    const decision = issues.length === 0 ? "Lot Sain" : "Lot Endommagé";
-    const riskLevel = issues.length >= 3 ? "Élevé" : issues.length >= 1 ? "Moyen" : "Faible";
-
-    return { issues, decision, riskLevel, details, issueCount: issues.length };
+  validateYear(year) {
+    return year === 2026;
   }
 
   /**
-   * Analyse un lot d'agrumes
+   * Valide la qualité initiale (doit être excellente)
+   */
+  validateInitialQuality(quality) {
+    return quality && quality.toLowerCase() === 'excellente';
+  }
+
+  /**
+   * Analyse un lot d'agrumes avec les nouveaux seuils
    */
   analyzeCitrusLot(lot) {
     const issues = [];
     const details = {};
 
-    // Température: 10-15°C
-    if (lot.temperature < 10) {
-      issues.push(`🌡️ Froid physiologique (${lot.temperature}°C < 10°C) - risque pour la peau`);
-      details.temperature = "critique_bas";
-    } else if (lot.temperature > 15) {
-      issues.push(`🌡️ Température trop élevée (${lot.temperature}°C > 15°C) - maturation accélérée`);
-      details.temperature = "critique_haut";
+    // Année
+    if (!this.validateYear(lot.year)) {
+      issues.push(`📅 Année incorrecte (${lot.year} au lieu de 2026)`);
+      details.year = "non_conforme";
     } else {
-      details.temperature = "optimal";
+      details.year = "conforme";
     }
 
-    // Humidité: 85-95%
-    if (lot.humidity < 85) {
-      issues.push(`💧 Humidité trop basse (${lot.humidity}% < 85%) - risque dessèchement de la peau`);
-      details.humidity = "critique_bas";
-    } else if (lot.humidity > 95) {
-      issues.push(`💧 Humidité trop élevée (${lot.humidity}% > 95%) - risque moisissure`);
-      details.humidity = "critique_haut";
+    // Qualité initiale
+    if (!this.validateInitialQuality(lot.initialQuality)) {
+      issues.push(`⭐ Qualité initiale insuffisante (${lot.initialQuality} au lieu de 'excellente')`);
+      details.initialQuality = "non_conforme";
     } else {
-      details.humidity = "optimal";
+      details.initialQuality = "conforme";
     }
 
-    // Durée: ≤21 jours
+    // Durée ≤ 21 jours
     if (lot.duration > 21) {
-      issues.push(`⏱️ Durée excessive (${lot.duration} jours > 21 jours) - risque de détérioration`);
-      details.duration = "critique";
+      issues.push(`⏱️ Durée excessive (${lot.duration} jours > 21 jours)`);
+      details.duration = "non_conforme";
     } else {
-      details.duration = "optimal";
+      details.duration = "conforme";
     }
 
-    // Exposition soleil: ≤1h (60 minutes)
+    // Température min 10°C, max 15°C
+    if (lot.temperatureMin < 10) {
+      issues.push(`🌡️ Température minimale trop basse (${lot.temperatureMin}°C < 10°C)`);
+      details.temperatureMin = "non_conforme";
+    } else {
+      details.temperatureMin = "conforme";
+    }
+    
+    if (lot.temperatureMax > 15) {
+      issues.push(`🌡️ Température maximale trop élevée (${lot.temperatureMax}°C > 15°C)`);
+      details.temperatureMax = "non_conforme";
+    } else {
+      details.temperatureMax = "conforme";
+    }
+
+    // Humidité 85-95%
+    if (lot.humidityMin < 85) {
+      issues.push(`💧 Humidité minimale trop basse (${lot.humidityMin}% < 85%)`);
+      details.humidityMin = "non_conforme";
+    } else {
+      details.humidityMin = "conforme";
+    }
+    
+    if (lot.humidityMax > 95) {
+      issues.push(`💧 Humidité maximale trop élevée (${lot.humidityMax}% > 95%)`);
+      details.humidityMax = "non_conforme";
+    } else {
+      details.humidityMax = "conforme";
+    }
+
+    // Pression 1005-1020 hPa
+    if (lot.pressure < 1005 || lot.pressure > 1020) {
+      issues.push(`📊 Pression hors normes (${lot.pressure} hPa) - doit être entre 1005 et 1020 hPa`);
+      details.pressure = "non_conforme";
+    } else {
+      details.pressure = "conforme";
+    }
+
+    // Pluie ≤ 5 mm
+    if (lot.rain > 5) {
+      issues.push(`🌧️ Pluie excessive (${lot.rain} mm > 5 mm)`);
+      details.rain = "non_conforme";
+    } else {
+      details.rain = "conforme";
+    }
+
+    // Choc entre 0 et 1
+    if (lot.shock < 0 || lot.shock > 1) {
+      issues.push(`🚛 Niveau de choc hors limites (${lot.shock}) - doit être entre 0 et 1`);
+      details.shock = "non_conforme";
+    } else {
+      details.shock = "conforme";
+    }
+
+    // Exposition soleil ≤ 1 heure (60 minutes)
     if (lot.sunExposure > 60) {
       issues.push(`☀️ Exposition soleil excessive (${lot.sunExposure} min > 60 min)`);
-      details.sunExposure = "critique";
+      details.sunExposure = "non_conforme";
     } else {
-      details.sunExposure = "optimal";
+      details.sunExposure = "conforme";
     }
 
-    // Ventilation: Bonne (flux continu)
-    const vent = lot.ventilation ? lot.ventilation.toLowerCase() : '';
-    if (!vent.includes('bonne') && !vent.includes('flux')) {
-      issues.push(`🌀 Ventilation inadéquate (${lot.ventilation}) - nécessite flux d'air continu`);
-      details.ventilation = "critique";
+    // Ventilation doit être présente
+    if (!lot.ventilation || lot.ventilation.toLowerCase() === 'non') {
+      issues.push(`🌀 Ventilation absente ou insuffisante`);
+      details.ventilation = "non_conforme";
     } else {
-      details.ventilation = "optimal";
+      details.ventilation = "conforme";
     }
 
-    // Choc: Faible tolérance
-    if (lot.shock && parseFloat(lot.shock) > 0.8) {
-      issues.push(`🚛 Choc détecté (niveau ${lot.shock}) - peut endommager la peau`);
-      details.shock = "critique";
-    } else {
-      details.shock = "optimal";
-    }
-
-    const decision = issues.length === 0 ? "Lot Sain" : "Lot Endommagé";
+    const decision = issues.length === 0 ? "SAIN" : "ENDOMMAGÉ";
     const riskLevel = issues.length >= 3 ? "Élevé" : issues.length >= 1 ? "Moyen" : "Faible";
 
-    return { issues, decision, riskLevel, details, issueCount: issues.length };
+    return {
+      issues,
+      decision,
+      riskLevel,
+      details,
+      issueCount: issues.length,
+      isCompliant: issues.length === 0
+    };
   }
 
   /**
-   * Analyse un lot de fraises
+   * Analyse un lot de tomates avec les nouveaux seuils
+   */
+  analyzeTomatoLot(lot) {
+    const issues = [];
+    const details = {};
+
+    // Année
+    if (!this.validateYear(lot.year)) {
+      issues.push(`📅 Année incorrecte (${lot.year} au lieu de 2026)`);
+      details.year = "non_conforme";
+    } else {
+      details.year = "conforme";
+    }
+
+    // Qualité initiale
+    if (!this.validateInitialQuality(lot.initialQuality)) {
+      issues.push(`⭐ Qualité initiale insuffisante (${lot.initialQuality} au lieu de 'excellente')`);
+      details.initialQuality = "non_conforme";
+    } else {
+      details.initialQuality = "conforme";
+    }
+
+    // Durée ≤ 7 jours
+    if (lot.duration > 7) {
+      issues.push(`⏱️ Durée excessive (${lot.duration} jours > 7 jours)`);
+      details.duration = "non_conforme";
+    } else {
+      details.duration = "conforme";
+    }
+
+    // Température min 12°C, max 20°C
+    if (lot.temperatureMin < 12) {
+      issues.push(`🌡️ Température minimale trop basse (${lot.temperatureMin}°C < 12°C)`);
+      details.temperatureMin = "non_conforme";
+    } else {
+      details.temperatureMin = "conforme";
+    }
+    
+    if (lot.temperatureMax > 20) {
+      issues.push(`🌡️ Température maximale trop élevée (${lot.temperatureMax}°C > 20°C)`);
+      details.temperatureMax = "non_conforme";
+    } else {
+      details.temperatureMax = "conforme";
+    }
+
+    // Humidité 80-90%
+    if (lot.humidityMin < 80) {
+      issues.push(`💧 Humidité minimale trop basse (${lot.humidityMin}% < 80%)`);
+      details.humidityMin = "non_conforme";
+    } else {
+      details.humidityMin = "conforme";
+    }
+    
+    if (lot.humidityMax > 90) {
+      issues.push(`💧 Humidité maximale trop élevée (${lot.humidityMax}% > 90%)`);
+      details.humidityMax = "non_conforme";
+    } else {
+      details.humidityMax = "conforme";
+    }
+
+    // Pression 1008-1020 hPa
+    if (lot.pressure < 1008 || lot.pressure > 1020) {
+      issues.push(`📊 Pression hors normes (${lot.pressure} hPa) - doit être entre 1008 et 1020 hPa`);
+      details.pressure = "non_conforme";
+    } else {
+      details.pressure = "conforme";
+    }
+
+    // Pluie ≤ 3 mm
+    if (lot.rain > 3) {
+      issues.push(`🌧️ Pluie excessive (${lot.rain} mm > 3 mm)`);
+      details.rain = "non_conforme";
+    } else {
+      details.rain = "conforme";
+    }
+
+    // Choc entre 0 et 0.5
+    if (lot.shock < 0 || lot.shock > 0.5) {
+      issues.push(`🚛 Niveau de choc hors limites (${lot.shock}) - doit être entre 0 et 0.5`);
+      details.shock = "non_conforme";
+    } else {
+      details.shock = "conforme";
+    }
+
+    // Exposition soleil ≤ 0.5 heure (30 minutes)
+    if (lot.sunExposure > 30) {
+      issues.push(`☀️ Exposition soleil excessive (${lot.sunExposure} min > 30 min)`);
+      details.sunExposure = "non_conforme";
+    } else {
+      details.sunExposure = "conforme";
+    }
+
+    // Ventilation doit être présente
+    if (!lot.ventilation || lot.ventilation.toLowerCase() === 'non') {
+      issues.push(`🌀 Ventilation absente ou insuffisante`);
+      details.ventilation = "non_conforme";
+    } else {
+      details.ventilation = "conforme";
+    }
+
+    const decision = issues.length === 0 ? "SAIN" : "ENDOMMAGÉ";
+    const riskLevel = issues.length >= 3 ? "Élevé" : issues.length >= 1 ? "Moyen" : "Faible";
+
+    return {
+      issues,
+      decision,
+      riskLevel,
+      details,
+      issueCount: issues.length,
+      isCompliant: issues.length === 0
+    };
+  }
+
+  /**
+   * Analyse un lot de fraises avec les nouveaux seuils
    */
   analyzeStrawberryLot(lot) {
     const issues = [];
     const details = {};
 
-    // Température: 0-2°C
-    if (lot.temperature < 0) {
-      issues.push(`🌡️ Gel (${lot.temperature}°C < 0°C) - destruction cellulaire`);
-      details.temperature = "critique_bas";
-    } else if (lot.temperature > 2) {
-      issues.push(`🌡️ Température trop élevée (${lot.temperature}°C > 2°C) - ramollissement rapide`);
-      details.temperature = "critique_haut";
+    // Année
+    if (!this.validateYear(lot.year)) {
+      issues.push(`📅 Année incorrecte (${lot.year} au lieu de 2026)`);
+      details.year = "non_conforme";
     } else {
-      details.temperature = "optimal";
+      details.year = "conforme";
     }
 
-    // Humidité: 90-95%
-    if (lot.humidity < 90) {
-      issues.push(`💧 Humidité trop basse (${lot.humidity}% < 90%) - risque dessèchement`);
-      details.humidity = "critique_bas";
-    } else if (lot.humidity > 95) {
-      issues.push(`💧 Humidité trop élevée (${lot.humidity}% > 95%) - risque moisissure`);
-      details.humidity = "critique_haut";
+    // Qualité initiale
+    if (!this.validateInitialQuality(lot.initialQuality)) {
+      issues.push(`⭐ Qualité initiale insuffisante (${lot.initialQuality} au lieu de 'excellente')`);
+      details.initialQuality = "non_conforme";
     } else {
-      details.humidity = "optimal";
+      details.initialQuality = "conforme";
     }
 
-    // Durée: ≤3 jours
+    // Durée ≤ 3 jours
     if (lot.duration > 3) {
-      issues.push(`⏱️ Durée excessive (${lot.duration} jours > 3 jours) - moisissure rapide`);
-      details.duration = "critique";
+      issues.push(`⏱️ Durée excessive (${lot.duration} jours > 3 jours)`);
+      details.duration = "non_conforme";
     } else {
-      details.duration = "optimal";
+      details.duration = "conforme";
     }
 
-    // Exposition soleil: ≤10 min
+    // Température min 0°C, max 2°C
+    if (lot.temperatureMin < 0) {
+      issues.push(`🌡️ Température minimale trop basse (${lot.temperatureMin}°C < 0°C) - risque de gel`);
+      details.temperatureMin = "non_conforme";
+    } else {
+      details.temperatureMin = "conforme";
+    }
+    
+    if (lot.temperatureMax > 2) {
+      issues.push(`🌡️ Température maximale trop élevée (${lot.temperatureMax}°C > 2°C)`);
+      details.temperatureMax = "non_conforme";
+    } else {
+      details.temperatureMax = "conforme";
+    }
+
+    // Humidité 90-95%
+    if (lot.humidityMin < 90) {
+      issues.push(`💧 Humidité minimale trop basse (${lot.humidityMin}% < 90%)`);
+      details.humidityMin = "non_conforme";
+    } else {
+      details.humidityMin = "conforme";
+    }
+    
+    if (lot.humidityMax > 95) {
+      issues.push(`💧 Humidité maximale trop élevée (${lot.humidityMax}% > 95%)`);
+      details.humidityMax = "non_conforme";
+    } else {
+      details.humidityMax = "conforme";
+    }
+
+    // Pression 1010-1025 hPa
+    if (lot.pressure < 1010 || lot.pressure > 1025) {
+      issues.push(`📊 Pression hors normes (${lot.pressure} hPa) - doit être entre 1010 et 1025 hPa`);
+      details.pressure = "non_conforme";
+    } else {
+      details.pressure = "conforme";
+    }
+
+    // Pluie = 0 mm
+    if (lot.rain > 0) {
+      issues.push(`🌧️ Pluie détectée (${lot.rain} mm) - doit être à 0 mm pour les fraises`);
+      details.rain = "non_conforme";
+    } else {
+      details.rain = "conforme";
+    }
+
+    // Choc entre 0 et 0.2
+    if (lot.shock < 0 || lot.shock > 0.2) {
+      issues.push(`🚛 Niveau de choc hors limites (${lot.shock}) - doit être entre 0 et 0.2`);
+      details.shock = "non_conforme";
+    } else {
+      details.shock = "conforme";
+    }
+
+    // Exposition soleil ≤ 0.17 heure (10 minutes)
     if (lot.sunExposure > 10) {
       issues.push(`☀️ Exposition soleil excessive (${lot.sunExposure} min > 10 min)`);
-      details.sunExposure = "critique";
+      details.sunExposure = "non_conforme";
     } else {
-      details.sunExposure = "optimal";
+      details.sunExposure = "conforme";
     }
 
-    // Ventilation: Contrôlée (réfrigérée)
-    const vent = lot.ventilation ? lot.ventilation.toLowerCase() : '';
-    if (!vent.includes('contrôlée') && !vent.includes('régulée')) {
-      issues.push(`🌀 Ventilation inadéquate (${lot.ventilation}) - nécessite contrôle strict`);
-      details.ventilation = "critique";
+    // Ventilation doit être présente
+    if (!lot.ventilation || lot.ventilation.toLowerCase() === 'non') {
+      issues.push(`🌀 Ventilation absente ou insuffisante`);
+      details.ventilation = "non_conforme";
     } else {
-      details.ventilation = "optimal";
+      details.ventilation = "conforme";
     }
 
-    // Choc: Extrêmement sensible
-    if (lot.shock && parseFloat(lot.shock) > 0.3) {
-      issues.push(`🚛 Choc détecté (niveau ${lot.shock}) - fraises extrêmement sensibles`);
-      details.shock = "critique";
-    } else {
-      details.shock = "optimal";
-    }
-
-    const decision = issues.length === 0 ? "Lot Sain" : "Lot Endommagé";
+    const decision = issues.length === 0 ? "SAIN" : "ENDOMMAGÉ";
     const riskLevel = issues.length >= 2 ? "Élevé" : issues.length >= 1 ? "Moyen" : "Faible";
 
-    return { issues, decision, riskLevel, details, issueCount: issues.length };
+    return {
+      issues,
+      decision,
+      riskLevel,
+      details,
+      issueCount: issues.length,
+      isCompliant: issues.length === 0
+    };
   }
 
   /**
-   * Analyse un lot de dattes
+   * Analyse un lot de dattes avec les nouveaux seuils
    */
   analyzeDateLot(lot) {
     const issues = [];
     const details = {};
 
-    // Température: 0-5°C (réfrigéré) ou ≤10°C (isotherme)
-    if (lot.temperature > 10) {
-      issues.push(`🌡️ Température trop élevée (${lot.temperature}°C > 10°C) - risque de fermentation`);
-      details.temperature = "critique_haut";
-    } else if (lot.temperature > 5 && lot.temperature <= 10) {
-      details.temperature = "limite"; // Mode isotherme acceptable
-    } else if (lot.temperature >= 0 && lot.temperature <= 5) {
-      details.temperature = "optimal";
-    } else if (lot.temperature < 0) {
-      issues.push(`🌡️ Température trop basse (${lot.temperature}°C < 0°C) - risque de gel`);
-      details.temperature = "critique_bas";
-    }
-
-    // Humidité: 60-75%
-    if (lot.humidity < 60) {
-      issues.push(`💧 Humidité trop basse (${lot.humidity}% < 60%) - risque dessèchement`);
-      details.humidity = "critique_bas";
-    } else if (lot.humidity > 75) {
-      issues.push(`💧 Humidité trop élevée (${lot.humidity}% > 75%) - risque moisissure`);
-      details.humidity = "critique_haut";
+    // Année
+    if (!this.validateYear(lot.year)) {
+      issues.push(`📅 Année incorrecte (${lot.year} au lieu de 2026)`);
+      details.year = "non_conforme";
     } else {
-      details.humidity = "optimal";
+      details.year = "conforme";
     }
 
-    // Durée: ≤60 jours
+    // Qualité initiale
+    if (!this.validateInitialQuality(lot.initialQuality)) {
+      issues.push(`⭐ Qualité initiale insuffisante (${lot.initialQuality} au lieu de 'excellente')`);
+      details.initialQuality = "non_conforme";
+    } else {
+      details.initialQuality = "conforme";
+    }
+
+    // Durée ≤ 60 jours
     if (lot.duration > 60) {
-      issues.push(`⏱️ Durée excessive (${lot.duration} jours > 60 jours) - risque de détérioration`);
-      details.duration = "critique";
+      issues.push(`⏱️ Durée excessive (${lot.duration} jours > 60 jours)`);
+      details.duration = "non_conforme";
     } else {
-      details.duration = "optimal";
+      details.duration = "conforme";
     }
 
-    // Exposition soleil: ≤2h (120 minutes)
+    // Température min 0°C, max 5°C
+    if (lot.temperatureMin < 0) {
+      issues.push(`🌡️ Température minimale trop basse (${lot.temperatureMin}°C < 0°C)`);
+      details.temperatureMin = "non_conforme";
+    } else {
+      details.temperatureMin = "conforme";
+    }
+    
+    if (lot.temperatureMax > 5) {
+      issues.push(`🌡️ Température maximale trop élevée (${lot.temperatureMax}°C > 5°C)`);
+      details.temperatureMax = "non_conforme";
+    } else {
+      details.temperatureMax = "conforme";
+    }
+
+    // Humidité 60-75%
+    if (lot.humidityMin < 60) {
+      issues.push(`💧 Humidité minimale trop basse (${lot.humidityMin}% < 60%) - risque dessèchement`);
+      details.humidityMin = "non_conforme";
+    } else {
+      details.humidityMin = "conforme";
+    }
+    
+    if (lot.humidityMax > 75) {
+      issues.push(`💧 Humidité maximale trop élevée (${lot.humidityMax}% > 75%) - risque moisissure`);
+      details.humidityMax = "non_conforme";
+    } else {
+      details.humidityMax = "conforme";
+    }
+
+    // Pression 1005-1025 hPa
+    if (lot.pressure < 1005 || lot.pressure > 1025) {
+      issues.push(`📊 Pression hors normes (${lot.pressure} hPa) - doit être entre 1005 et 1025 hPa`);
+      details.pressure = "non_conforme";
+    } else {
+      details.pressure = "conforme";
+    }
+
+    // Pluie = 0 mm
+    if (lot.rain > 0) {
+      issues.push(`🌧️ Pluie détectée (${lot.rain} mm) - doit être à 0 mm pour les dattes`);
+      details.rain = "non_conforme";
+    } else {
+      details.rain = "conforme";
+    }
+
+    // Choc entre 0 et 2
+    if (lot.shock < 0 || lot.shock > 2) {
+      issues.push(`🚛 Niveau de choc hors limites (${lot.shock}) - doit être entre 0 et 2`);
+      details.shock = "non_conforme";
+    } else {
+      details.shock = "conforme";
+    }
+
+    // Exposition soleil ≤ 2 heures (120 minutes)
     if (lot.sunExposure > 120) {
       issues.push(`☀️ Exposition soleil excessive (${lot.sunExposure} min > 120 min)`);
-      details.sunExposure = "critique";
+      details.sunExposure = "non_conforme";
     } else {
-      details.sunExposure = "optimal";
+      details.sunExposure = "conforme";
     }
 
-    // Ventilation: Faible à contrôlée
-    const vent = lot.ventilation ? lot.ventilation.toLowerCase() : '';
-    if (vent.includes('forte') || vent.includes('excessive')) {
-      issues.push(`🌀 Ventilation excessive (${lot.ventilation}) - risque dessèchement`);
-      details.ventilation = "critique";
+    // Ventilation doit être présente
+    if (!lot.ventilation || lot.ventilation.toLowerCase() === 'non') {
+      issues.push(`🌀 Ventilation absente ou insuffisante`);
+      details.ventilation = "non_conforme";
     } else {
-      details.ventilation = "optimal";
+      details.ventilation = "conforme";
     }
 
-    // Choc: Sensible
-    if (lot.shock && parseFloat(lot.shock) > 1.5) {
-      issues.push(`🚛 Choc important détecté (niveau ${lot.shock}) - peut endommager les dattes`);
-      details.shock = "critique";
-    } else {
-      details.shock = "optimal";
-    }
-
-    const decision = issues.length === 0 ? "Lot Sain" : "Lot Endommagé";
+    const decision = issues.length === 0 ? "SAIN" : "ENDOMMAGÉ";
     const riskLevel = issues.length >= 3 ? "Élevé" : issues.length >= 1 ? "Moyen" : "Faible";
 
-    return { issues, decision, riskLevel, details, issueCount: issues.length };
+    return {
+      issues,
+      decision,
+      riskLevel,
+      details,
+      issueCount: issues.length,
+      isCompliant: issues.length === 0
+    };
   }
 
   /**
@@ -286,19 +483,180 @@ class AnalysisService {
   }
 
   /**
-   * Détermine le type de produit à partir du nom de fichier
+   * Détermine le type de produit à partir de la catégorie
    */
-  detectProductType(fileName) {
-    const name = fileName.toLowerCase();
-    if (name.includes('tomate')) return 'tomate';
-    if (name.includes('agrume') || name.includes('orange') || name.includes('citron')) return 'agrume';
-    if (name.includes('fraise')) return 'fraise';
-    if (name.includes('datte')) return 'datte';
-    return 'tomate'; // par défaut
+  detectProductType(category) {
+    const cat = category.toLowerCase();
+    if (cat.includes('tomate')) return 'tomate';
+    if (cat.includes('agrume') || cat.includes('orange') || cat.includes('citron')) return 'agrume';
+    if (cat.includes('fraise')) return 'fraise';
+    if (cat.includes('datte')) return 'datte';
+    return 'tomate';
   }
 
   /**
-   * Analyse un lot générique selon son type (Moteur de règles)
+   * Génère un rapport détaillé formaté pour un lot
+   */
+  generateDetailedReport(lot, analysisResult, productType) {
+    const productNames = {
+      tomate: "Tomates",
+      agrume: "Agrumes",
+      fraise: "Fraises",
+      datte: "Dattes"
+    };
+
+    const productName = productNames[productType] || productType;
+
+    // Construction du rapport
+    let report = `📄 Rapport d'analyse – Lot ${lot.lotId}\n\n`;
+    report += `Catégorie : ${productName}\n`;
+    report += `Décision automatique : `;
+    
+    if (analysisResult.decision === "SAIN") {
+      report += `✅ SAIN\n\n`;
+    } else {
+      report += `❌ ENDOMMAGÉ\n\n`;
+    }
+
+    report += `📋 Informations générales (issues du fichier CSV)\n`;
+    report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    report += `lot_id : ${lot.lotId || 'N/A'}\n`;
+    report += `category : ${productName}\n`;
+    report += `mode_transport : ${lot.transportMode || 'non spécifié'}\n`;
+    report += `region_origine : ${lot.originRegion || 'non spécifiée'}\n`;
+    report += `region_destination : ${lot.destinationRegion || 'non spécifiée'}\n`;
+    report += `distance_km : ${lot.distance || 0} km\n`;
+    report += `poids_kg : ${lot.weight || 0} kg\n\n`;
+
+    report += `🔍 Vérification des seuils obligatoires 2026 – ${productName}\n`;
+    report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+
+    // Année
+    report += `✔ année fixe = 2026\n`;
+    report += `→ Valeur mesurée : ${lot.year || 2026} `;
+    report += lot.year === 2026 ? `✅ Conforme\n` : `❌ Non conforme\n`;
+
+    // Qualité initiale
+    report += `✔ qualité initiale = excellente\n`;
+    report += `→ Valeur mesurée : ${lot.initialQuality || 'non spécifiée'} `;
+    report += lot.initialQuality?.toLowerCase() === 'excellente' ? `✅ Conforme\n` : `❌ Non conforme\n`;
+
+    // Durée
+    const durationLimits = { tomate: 7, agrume: 21, fraise: 3, datte: 60 };
+    report += `✔ durée de voyage ≤ ${durationLimits[productType]} jours\n`;
+    report += `→ Valeur mesurée : ${lot.duration || 0} jours `;
+    report += lot.duration <= durationLimits[productType] ? `✅ Conforme\n` : `❌ Non conforme\n`;
+
+    // Température
+    const tempLimits = {
+      tomate: { min: 12, max: 20 },
+      agrume: { min: 10, max: 15 },
+      fraise: { min: 0, max: 2 },
+      datte: { min: 0, max: 5 }
+    };
+    report += `✔ température minimale autorisée = ${tempLimits[productType].min} °C\n`;
+    report += `✔ température maximale autorisée = ${tempLimits[productType].max} °C\n`;
+    report += `→ temperature_mesuree-min : ${lot.temperatureMin?.toFixed(2) || 0} °C\n`;
+    report += `→ temperature_mesuree-max : ${lot.temperatureMax?.toFixed(2) || 0} °C\n`;
+    const tempOk = lot.temperatureMin >= tempLimits[productType].min && 
+                   lot.temperatureMax <= tempLimits[productType].max;
+    report += `→ Résultat : ${tempOk ? `✅ Conforme` : `❌ Non conforme`}\n`;
+
+    // Humidité
+    const humidityLimits = {
+      tomate: { min: 80, max: 90 },
+      agrume: { min: 85, max: 95 },
+      fraise: { min: 90, max: 95 },
+      datte: { min: 60, max: 75 }
+    };
+    report += `✔ humidité minimale autorisée = ${humidityLimits[productType].min} %\n`;
+    report += `✔ humidité maximale autorisée = ${humidityLimits[productType].max} %\n`;
+    report += `→ humidite_%_mesure_min : ${lot.humidityMin?.toFixed(2) || 0} %\n`;
+    report += `→ humidite_%_mesure_max : ${lot.humidityMax?.toFixed(2) || 0} %\n`;
+    const humidityOk = lot.humidityMin >= humidityLimits[productType].min && 
+                       lot.humidityMax <= humidityLimits[productType].max;
+    report += `→ Résultat : ${humidityOk ? `✅ Conforme` : `❌ Non conforme`}\n`;
+
+    // Pression
+    const pressureLimits = {
+      tomate: { min: 1008, max: 1020 },
+      agrume: { min: 1005, max: 1020 },
+      fraise: { min: 1010, max: 1025 },
+      datte: { min: 1005, max: 1025 }
+    };
+    report += `✔ pression minimale autorisée = ${pressureLimits[productType].min} hPa\n`;
+    report += `✔ pression maximale autorisée = ${pressureLimits[productType].max} hPa\n`;
+    report += `→ pression_hpa : ${lot.pressure?.toFixed(2) || 0} hPa\n`;
+    const pressureOk = lot.pressure >= pressureLimits[productType].min && 
+                       lot.pressure <= pressureLimits[productType].max;
+    report += `→ Résultat : ${pressureOk ? `✅ Conforme` : `❌ Non conforme`}\n`;
+
+    // Pluie
+    const rainLimits = { tomate: 3, agrume: 5, fraise: 0, datte: 0 };
+    report += `✔ pluie maximale autorisée = ${rainLimits[productType]} mm\n`;
+    report += `→ pluie_mm : ${lot.rain?.toFixed(2) || 0} mm\n`;
+    report += `→ Résultat : ${lot.rain <= rainLimits[productType] ? `✅ Conforme` : `❌ Non conforme`}\n`;
+
+    // Choc
+    const shockLimits = {
+      tomate: { min: 0, max: 0.5 },
+      agrume: { min: 0, max: 1 },
+      fraise: { min: 0, max: 0.2 },
+      datte: { min: 0, max: 2 }
+    };
+    report += `✔ choc transport autorisé entre ${shockLimits[productType].min} et ${shockLimits[productType].max}\n`;
+    report += `→ choc_transport : ${lot.shock?.toFixed(4) || 0}\n`;
+    const shockOk = lot.shock >= shockLimits[productType].min && 
+                    lot.shock <= shockLimits[productType].max;
+    report += `→ Résultat : ${shockOk ? `✅ Conforme` : `❌ Non conforme`}\n`;
+
+    // Exposition soleil
+    const sunLimits = { tomate: 30, agrume: 60, fraise: 10, datte: 120 };
+    report += `✔ temps d’exposition au soleil ≤ ${sunLimits[productType]} minutes (${(sunLimits[productType]/60).toFixed(2)} heure)\n`;
+    report += `→ temps_exposition_soleil_h : ${(lot.sunExposure/60).toFixed(2)} h (${lot.sunExposure} minutes)\n`;
+    report += `→ Résultat : ${lot.sunExposure <= sunLimits[productType] ? `✅ Conforme` : `❌ Non conforme`}\n`;
+
+    // Ventilation
+    report += `✔ ventilation = oui\n`;
+    report += `→ ventilation : ${lot.ventilation || 'non spécifié'}\n`;
+    const ventOk = lot.ventilation && lot.ventilation.toLowerCase() !== 'non';
+    report += `→ Résultat : ${ventOk ? `✅ Conforme` : `❌ Non conforme`}\n\n`;
+
+    // Causes de non-conformité
+    if (analysisResult.issues.length > 0) {
+      report += `⚠️ Cause(s) de non-conformité\n`;
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      analysisResult.issues.forEach(issue => {
+        report += `${issue}\n`;
+      });
+      report += `\n`;
+    }
+
+    // Conclusion
+    report += `📌 Conclusion finale\n`;
+    report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    
+    if (analysisResult.decision === "SAIN") {
+      report += `✅ Tous les paramètres sont conformes. Le lot est SAIN.\n`;
+    } else {
+      const mainIssue = analysisResult.issues[0] || "Non-conformité détectée";
+      report += `➡ ${mainIssue}\n\n`;
+      if (analysisResult.issues.length > 0) {
+        report += `Bien que certains paramètres environnementaux soient conformes,\n`;
+        report += `➡ le dépassement des seuils rend le lot ENDOMMAGÉ selon les règles strictes 2026.\n`;
+      }
+    }
+
+    report += `\n`;
+    report += `Analysé automatiquement par ExportChain AI\n`;
+    report += `Date d’analyse : ${new Date().toLocaleDateString('fr-FR')}\n`;
+    report += `Système : Module Intelligent de Validation Logistique\n`;
+
+    return report;
+  }
+
+  /**
+   * Analyse un lot selon son type avec les nouveaux seuils
    */
   analyzeLotByRules(lotData, productType = "tomate") {
     switch(productType.toLowerCase()) {
@@ -316,29 +674,39 @@ class AnalysisService {
   }
 
   /**
-   * Analyse un lot avec Ollama (version progressive avec WebSockets)
+   * Analyse un lot avec Ollama et génère un rapport détaillé
    */
-  async analyzeLotWithProgress(lotData, productType = "tomate", io = null, userId = null, fileId = null, lotIndex = null, totalLots = null) {
+  async analyzeLot(lotData, productType = "tomate", io = null, userId = null, fileId = null, lotIndex = null, totalLots = null) {
     try {
-      // 1. Analyse par règles
+      // 1. Analyse par règles d'abord
       const ruleAnalysis = this.analyzeLotByRules(lotData, productType);
       
-      // 2. Génération du rapport Ollama avec WebSockets
-      const aiReport = await ollamaService.generateLotReport(
-        lotData, 
-        ruleAnalysis, 
-        productType,
-        io,
-        userId,
-        fileId,
-        lotIndex,
-        totalLots
-      );
+      // 2. Génération du rapport détaillé
+      const detailedReport = this.generateDetailedReport(lotData, ruleAnalysis, productType);
+      
+      // 3. Génération du rapport Ollama (optionnel)
+      let ollamaReport = {};
+      try {
+        ollamaReport = await ollamaService.generateLotReport(
+          lotData, 
+          ruleAnalysis, 
+          productType,
+          io,
+          userId,
+          fileId,
+          lotIndex,
+          totalLots
+        );
+      } catch (error) {
+        console.log('⚠️ Ollama non disponible, utilisation du rapport détaillé uniquement');
+        ollamaReport = { fallback: true };
+      }
       
       const result = {
         ...lotData,
         analysis: ruleAnalysis,
-        aiReport,
+        detailedReport,
+        ollamaReport,
         productType,
         analyzedAt: new Date()
       };
@@ -349,7 +717,7 @@ class AnalysisService {
           lotId: lotData.lotId || `LOT-${Date.now()}`,
           productType,
           analysis: ruleAnalysis,
-          aiReport,
+          ollamaReport,
           progress: {
             current: lotIndex,
             total: totalLots,
@@ -361,9 +729,11 @@ class AnalysisService {
       return result;
 
     } catch (error) {
-      console.error('❌ Erreur analyse lot avec Ollama:', error.message);
+      console.error('❌ Erreur analyse lot:', error.message);
       
+      // Fallback
       const ruleAnalysis = this.analyzeLotByRules(lotData, productType);
+      const detailedReport = this.generateDetailedReport(lotData, ruleAnalysis, productType);
       
       // Émettre l'erreur via WebSocket
       if (io && userId) {
@@ -380,12 +750,8 @@ class AnalysisService {
       return {
         ...lotData,
         analysis: ruleAnalysis,
-        aiReport: { 
-          error: error.message,
-          fallback: true,
-          resume: "Rapport IA non disponible, analyse par règles uniquement",
-          conclusion: ruleAnalysis.decision
-        },
+        detailedReport,
+        ollamaReport: { error: error.message, fallback: true },
         productType,
         analyzedAt: new Date()
       };
@@ -393,7 +759,7 @@ class AnalysisService {
   }
 
   /**
-   * Analyse plusieurs lots avec mise à jour progressive (version améliorée)
+   * Analyse plusieurs lots avec mise à jour progressive
    */
   async analyzeBatch(lots, productType = "tomate", io = null, userId = null, fileId = null) {
     console.log(`📦 Analyse progressive de ${lots.length} lots (produit: ${productType})...`);
@@ -426,8 +792,7 @@ class AnalysisService {
           });
         }
         
-        // Analyser le lot avec progression
-        const result = await this.analyzeLotWithProgress(
+        const result = await this.analyzeLot(
           lots[i], 
           productType, 
           io, 
@@ -439,23 +804,25 @@ class AnalysisService {
         
         results.push(result);
 
-        // Petit délai pour éviter de surcharger Ollama
-        await new Promise(resolve => setTimeout(resolve, 100));
+        // Petit délai pour éviter de surcharger
+        await new Promise(resolve => setTimeout(resolve, 50));
         
       } catch (error) {
         console.error(`❌ Erreur sur lot ${i + 1}:`, error.message);
         
         // Fallback
         const ruleAnalysis = this.analyzeLotByRules(lots[i], productType);
+        const detailedReport = this.generateDetailedReport(lots[i], ruleAnalysis, productType);
+        
         const fallbackResult = {
           ...lots[i],
-          analysis: ruleAnalysis,
-          aiReport: { 
-            error: error.message,
-            fallback: true,
-            resume: "Rapport IA non disponible",
-            conclusion: ruleAnalysis.decision
+          analysis: { 
+            issues: ["Erreur d'analyse"], 
+            decision: "ERREUR",
+            isCompliant: false
           },
+          detailedReport: `❌ Erreur d'analyse pour ce lot: ${error.message}\n\n${detailedReport}`,
+          ollamaReport: { error: error.message, fallback: true },
           productType,
           analyzedAt: new Date()
         };
@@ -478,17 +845,18 @@ class AnalysisService {
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
     console.log(`✅ Analyse batch terminée : ${results.length} lots traités en ${duration}s`);
     
+    // Statistiques
+    const sains = results.filter(r => r.analysis?.decision === "SAIN").length;
+    const endommages = results.filter(r => r.analysis?.decision === "ENDOMMAGÉ").length;
+    const erreurs = results.filter(r => r.analysis?.decision === "ERREUR").length;
+
     // Émettre la fin de l'analyse
     if (io && userId) {
       io.to(`user_${userId}`).emit('analysis:completed', {
         fileId,
         totalLots: results.length,
         duration,
-        stats: {
-          sains: results.filter(r => r.analysis?.decision === "Lot Sain").length,
-          endommages: results.filter(r => r.analysis?.decision === "Lot Endommagé").length,
-          erreurs: results.filter(r => r.analysis?.decision === "Erreur d'analyse").length
-        }
+        stats: { sains, endommages, erreurs }
       });
     }
     
@@ -504,8 +872,7 @@ class AnalysisService {
       return {
         success: true,
         models: response.data.models || [],
-        message: "✅ Ollama connecté",
-        url: "http://localhost:11434"
+        message: "✅ Ollama connecté"
       };
     } catch (error) {
       return {

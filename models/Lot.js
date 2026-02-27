@@ -1,7 +1,7 @@
 const mongoose = require("mongoose");
 
 const LotSchema = new mongoose.Schema({
-  // Identifiants
+  // ========== IDENTIFIANTS ==========
   lotId: {
     type: String,
     required: true,
@@ -12,24 +12,61 @@ const LotSchema = new mongoose.Schema({
     required: true
   },
   
-  // Données du lot
-  temperature: Number,
-  humidity: Number,
-  rain: Number,
-  pressure: Number,
+  // ========== INFORMATIONS DE BASE ==========
+  category: {
+    type: String,
+    enum: ["Tomates", "Fraises", "Agrumes", "Dattes", ""],
+    default: ""
+  },
+  year: Number,
+  month: Number,
+  quarter: String,
+  initialQuality: {
+    type: String,
+    enum: ["excellente", "bonne", "moyenne", "mauvaise"],
+    default: "excellente"
+  },
+  
+  // ========== TRANSPORT ==========
+  originRegion: String,
+  destinationRegion: String,
+  transportMode: String,
+  distance: Number,
   duration: Number,
-  shock: String,
-  sunExposure: Number,
+  
+  // ========== PARAMÈTRES ENVIRONNEMENTAUX ==========
+  // Température
+  temperatureMin: Number,
+  temperatureMax: Number,
+  
+  // Humidité
+  humidityMin: Number,
+  humidityMax: Number,
+  
+  // Autres paramètres
+  shock: Number,
+  pressure: Number,
+  rain: Number,
+  sunExposure: Number, // en minutes
   ventilation: String,
   
-  // Type de produit
+  // ========== DONNÉES COMMERCIALES ==========
+  weight: Number,
+  purchasePrice: Number,
+  salePrice: Number,
+  transportCost: Number,
+  margin: Number,
+  marginPercent: Number,
+  automaticDecision: String,
+  
+  // ========== TYPE DE PRODUIT ==========
   productType: {
     type: String,
     enum: ["tomate", "agrume", "fraise", "datte", "inconnu"],
     default: "inconnu"
   },
   
-  // Résultats d'analyse (moteur de règles)
+  // ========== RÉSULTATS D'ANALYSE (MOTEUR DE RÈGLES) ==========
   analysis: {
     issues: [String],
     riskLevel: {
@@ -38,22 +75,34 @@ const LotSchema = new mongoose.Schema({
     },
     decision: {
       type: String,
-      enum: ["Lot Sain", "Lot Endommagé", "Erreur d'analyse", "Inconnu"]
+      enum: ["SAIN", "ENDOMMAGÉ", "ERREUR", "Inconnu"],
+      default: "Inconnu"
+    },
+    isCompliant: {
+      type: Boolean,
+      default: false
     },
     issueCount: Number,
     details: {
-      temperature: String,
-      humidity: String,
+      year: String,
+      initialQuality: String,
+      temperatureMin: String,
+      temperatureMax: String,
+      humidityMin: String,
+      humidityMax: String,
       pressure: String,
       rain: String,
-      duration: String,
       shock: String,
       sunExposure: String,
-      ventilation: String
+      ventilation: String,
+      duration: String
     }
   },
   
-  // Rapport IA (Ollama)
+  // ========== RAPPORT DÉTAILLÉ ==========
+  detailedReport: String,
+  
+  // ========== RAPPORT IA (OLLAMA) ==========
   aiReport: {
     resume: String,
     niveau_risque: String,
@@ -73,24 +122,20 @@ const LotSchema = new mongoose.Schema({
     fallback: Boolean
   },
   
-  // ========== NOUVEAUX CHAMPS POUR LA VISIBILITÉ CLIENT ==========
-  // Indique si le rapport est visible par les clients
+  // ========== VISIBILITÉ CLIENT ==========
   isPublic: {
     type: Boolean,
     default: false
   },
-  // Date de publication
   publishedAt: {
     type: Date
   },
-  // Qui a publié le rapport
   publishedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   },
-  // ==============================================================
   
-  // Métadonnées
+  // ========== MÉTADONNÉES ==========
   analyzedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -118,16 +163,24 @@ LotSchema.index({ "analysis.decision": 1 });
 LotSchema.index({ fileName: 1 });
 LotSchema.index({ productType: 1 });
 
-// NOUVEAU : Index pour la recherche des rapports publics
+// Index pour la recherche des rapports publics
 LotSchema.index({ isPublic: 1, publishedAt: -1 });
 
 // Index composé pour les filtres clients
 LotSchema.index({ isPublic: 1, productType: 1, publishedAt: -1 });
 
+// Index pour les recherches par région
+LotSchema.index({ originRegion: 1, destinationRegion: 1 });
+
+// Index pour les paramètres environnementaux
+LotSchema.index({ temperatureMin: 1, temperatureMax: 1 });
+LotSchema.index({ humidityMin: 1, humidityMax: 1 });
+
 // ========== MÉTHODES D'INSTANCE ==========
 
 /**
  * Vérifie si le lot est visible par les clients
+ * @returns {boolean}
  */
 LotSchema.methods.isVisibleToClients = function() {
   return this.isPublic === true && this.publishedAt !== null;
@@ -135,6 +188,7 @@ LotSchema.methods.isVisibleToClients = function() {
 
 /**
  * Publie le rapport pour les clients
+ * @param {ObjectId} userId - ID de l'utilisateur qui publie
  */
 LotSchema.methods.publish = function(userId) {
   this.isPublic = true;
@@ -151,28 +205,65 @@ LotSchema.methods.unpublish = function() {
   this.publishedBy = null;
 };
 
+/**
+ * Formate les données pour l'affichage client
+ * @returns {Object} - Données formatées
+ */
+LotSchema.methods.toClientJSON = function() {
+  return {
+    lotId: this.lotId,
+    category: this.category,
+    productType: this.productType,
+    originRegion: this.originRegion,
+    destinationRegion: this.destinationRegion,
+    transportMode: this.transportMode,
+    analysis: {
+      decision: this.analysis?.decision,
+      riskLevel: this.analysis?.riskLevel,
+      isCompliant: this.analysis?.isCompliant
+    },
+    detailedReport: this.detailedReport,
+    publishedAt: this.publishedAt,
+    analyzedAt: this.analyzedAt
+  };
+};
+
 // ========== MÉTHODES STATIQUES ==========
 
 /**
  * Récupère tous les rapports publics
+ * @param {Object} filter - Filtres supplémentaires
+ * @returns {Promise<Array>}
  */
 LotSchema.statics.findPublic = function(filter = {}) {
   const query = { isPublic: true, ...filter };
   return this.find(query)
-    .populate('publishedBy', 'nom prenom')
-    .populate('analyzedBy', 'nom prenom')
+    .populate('publishedBy', 'nom prenom email')
+    .populate('analyzedBy', 'nom prenom email')
     .sort({ publishedAt: -1 });
 };
 
 /**
  * Récupère les rapports publics par type de produit
+ * @param {string} productType - Type de produit
+ * @returns {Promise<Array>}
  */
 LotSchema.statics.findPublicByProduct = function(productType) {
   return this.findPublic({ productType });
 };
 
 /**
+ * Récupère les rapports publics par décision
+ * @param {string} decision - SAIN ou ENDOMMAGÉ
+ * @returns {Promise<Array>}
+ */
+LotSchema.statics.findPublicByDecision = function(decision) {
+  return this.findPublic({ "analysis.decision": decision });
+};
+
+/**
  * Compte les rapports publics par statut
+ * @returns {Promise<Object>}
  */
 LotSchema.statics.countPublicStats = async function() {
   const stats = await this.aggregate([
@@ -193,11 +284,85 @@ LotSchema.statics.countPublicStats = async function() {
 
   stats.forEach(stat => {
     result.total += stat.count;
-    if (stat._id === "Lot Sain") result.sains = stat.count;
-    if (stat._id === "Lot Endommagé") result.endommages = stat.count;
+    if (stat._id === "SAIN") result.sains = stat.count;
+    if (stat._id === "ENDOMMAGÉ") result.endommages = stat.count;
   });
 
   return result;
 };
+
+/**
+ * Récupère les statistiques détaillées pour le dashboard
+ * @param {ObjectId} userId - ID de l'utilisateur
+ * @returns {Promise<Object>}
+ */
+LotSchema.statics.getDashboardStats = async function(userId) {
+  const total = await this.countDocuments({ analyzedBy: userId });
+  
+  const byDecision = await this.aggregate([
+    { $match: { analyzedBy: userId } },
+    {
+      $group: {
+        _id: "$analysis.decision",
+        count: { $sum: 1 }
+      }
+    }
+  ]);
+
+  const byProduct = await this.aggregate([
+    { $match: { analyzedBy: userId } },
+    {
+      $group: {
+        _id: "$productType",
+        count: { $sum: 1 }
+      }
+    }
+  ]);
+
+  const public = await this.countDocuments({ 
+    analyzedBy: userId,
+    isPublic: true 
+  });
+
+  const stats = {
+    total,
+    sains: 0,
+    endommages: 0,
+    erreurs: 0,
+    public,
+    produits: {}
+  };
+
+  byDecision.forEach(stat => {
+    if (stat._id === "SAIN") stats.sains = stat.count;
+    if (stat._id === "ENDOMMAGÉ") stats.endommages = stat.count;
+    if (stat._id === "ERREUR") stats.erreurs = stat.count;
+  });
+
+  byProduct.forEach(stat => {
+    stats.produits[stat._id] = stat.count;
+  });
+
+  return stats;
+};
+
+// ========== MIDDLEWARES ==========
+
+/**
+ * Middleware pre-save pour valider les données
+ */
+LotSchema.pre('save', function(next) {
+  // S'assurer que productType est défini à partir de category si nécessaire
+  if (!this.productType || this.productType === "inconnu") {
+    if (this.category) {
+      const cat = this.category.toLowerCase();
+      if (cat.includes('tomate')) this.productType = 'tomate';
+      else if (cat.includes('agrume')) this.productType = 'agrume';
+      else if (cat.includes('fraise')) this.productType = 'fraise';
+      else if (cat.includes('datte')) this.productType = 'datte';
+    }
+  }
+  next();
+});
 
 module.exports = mongoose.model("Lot", LotSchema);
