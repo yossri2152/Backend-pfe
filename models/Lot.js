@@ -1,3 +1,5 @@
+// models/Lot.js
+
 const mongoose = require("mongoose");
 
 const LotSchema = new mongoose.Schema({
@@ -58,6 +60,24 @@ const LotSchema = new mongoose.Schema({
   margin: Number,
   marginPercent: Number,
   automaticDecision: String,
+  
+  // ========== GESTION DES STOCKS (NOUVEAU) ==========
+  availableWeight: {
+    type: Number,
+    default: function() {
+      return this.weight; // Par défaut, tout le poids est disponible
+    }
+  },
+  originalWeight: {
+    type: Number,
+    default: function() {
+      return this.weight;
+    }
+  },
+  soldWeight: {
+    type: Number,
+    default: 0
+  },
   
   // ========== TYPE DE PRODUIT ==========
   productType: {
@@ -176,6 +196,10 @@ LotSchema.index({ originRegion: 1, destinationRegion: 1 });
 LotSchema.index({ temperatureMin: 1, temperatureMax: 1 });
 LotSchema.index({ humidityMin: 1, humidityMax: 1 });
 
+// Index pour la gestion des stocks (NOUVEAU)
+LotSchema.index({ availableWeight: 1 });
+LotSchema.index({ isPublic: 1, availableWeight: { $gt: 0 } });
+
 // ========== MÉTHODES D'INSTANCE ==========
 
 /**
@@ -184,6 +208,47 @@ LotSchema.index({ humidityMin: 1, humidityMax: 1 });
  */
 LotSchema.methods.isVisibleToClients = function() {
   return this.isPublic === true && this.publishedAt !== null;
+};
+
+/**
+ * Vérifie si le lot a du stock disponible
+ * @returns {boolean}
+ */
+LotSchema.methods.hasAvailableStock = function() {
+  const available = this.availableWeight !== undefined ? this.availableWeight : this.weight || 0;
+  return available > 0;
+};
+
+/**
+ * Récupère le poids disponible
+ * @returns {number}
+ */
+LotSchema.methods.getAvailableWeight = function() {
+  return this.availableWeight !== undefined ? this.availableWeight : this.weight || 0;
+};
+
+/**
+ * Réserve une quantité du lot (avant approbation)
+ * @param {number} quantity - Quantité à réserver
+ * @returns {boolean} - true si réservation réussie
+ */
+LotSchema.methods.reserveQuantity = function(quantity) {
+  const available = this.getAvailableWeight();
+  if (quantity <= available) {
+    this.availableWeight = available - quantity;
+    this.soldWeight = (this.soldWeight || 0) + quantity;
+    return true;
+  }
+  return false;
+};
+
+/**
+ * Annule une réservation (si demande rejetée)
+ * @param {number} quantity - Quantité à remettre en stock
+ */
+LotSchema.methods.cancelReservation = function(quantity) {
+  this.availableWeight = (this.availableWeight || 0) + quantity;
+  this.soldWeight = Math.max(0, (this.soldWeight || 0) - quantity);
 };
 
 /**
@@ -217,6 +282,9 @@ LotSchema.methods.toClientJSON = function() {
     originRegion: this.originRegion,
     destinationRegion: this.destinationRegion,
     transportMode: this.transportMode,
+    weight: this.weight,
+    availableWeight: this.getAvailableWeight(),
+    soldWeight: this.soldWeight || 0,
     analysis: {
       decision: this.analysis?.decision,
       riskLevel: this.analysis?.riskLevel,
@@ -229,6 +297,23 @@ LotSchema.methods.toClientJSON = function() {
 };
 
 // ========== MÉTHODES STATIQUES ==========
+
+/**
+ * Récupère tous les rapports publics avec stock disponible
+ * @param {Object} filter - Filtres supplémentaires
+ * @returns {Promise<Array>}
+ */
+LotSchema.statics.findPublicWithStock = function(filter = {}) {
+  const query = { 
+    isPublic: true, 
+    ...filter,
+    $expr: { $gt: [{ $ifNull: ["$availableWeight", "$weight"] }, 0] }
+  };
+  return this.find(query)
+    .populate('publishedBy', 'nom prenom email')
+    .populate('analyzedBy', 'nom prenom email')
+    .sort({ publishedAt: -1 });
+};
 
 /**
  * Récupère tous les rapports publics
@@ -324,13 +409,27 @@ LotSchema.statics.getDashboardStats = async function(userId) {
     isPublic: true 
   });
 
+  // Statistiques de stock (NOUVEAU)
+  const stockStats = await this.aggregate([
+    { $match: { analyzedBy: userId, isPublic: true } },
+    {
+      $group: {
+        _id: null,
+        totalWeight: { $sum: "$weight" },
+        totalAvailable: { $sum: { $ifNull: ["$availableWeight", "$weight"] } },
+        totalSold: { $sum: { $ifNull: ["$soldWeight", 0] } }
+      }
+    }
+  ]);
+
   const stats = {
     total,
     sains: 0,
     endommages: 0,
     erreurs: 0,
     public,
-    produits: {}
+    produits: {},
+    stock: stockStats[0] || { totalWeight: 0, totalAvailable: 0, totalSold: 0 }
   };
 
   byDecision.forEach(stat => {
@@ -362,7 +461,29 @@ LotSchema.pre('save', function(next) {
       else if (cat.includes('datte')) this.productType = 'datte';
     }
   }
+
+  // Initialiser les champs de stock si nécessaire (NOUVEAU)
+  if (this.weight && this.availableWeight === undefined) {
+    this.availableWeight = this.weight;
+    this.originalWeight = this.weight;
+    this.soldWeight = this.soldWeight || 0;
+  }
+
+  // S'assurer que availableWeight n'est jamais négatif
+  if (this.availableWeight < 0) {
+    this.availableWeight = 0;
+  }
+
   next();
+});
+
+/**
+ * Middleware post-save pour loguer les changements de stock
+ */
+LotSchema.post('save', function(doc) {
+  if (doc.isModified('availableWeight')) {
+    console.log(`📦 Stock mis à jour pour lot ${doc.lotId}: ${doc.availableWeight} kg disponibles`);
+  }
 });
 
 module.exports = mongoose.model("Lot", LotSchema);

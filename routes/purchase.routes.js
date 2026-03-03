@@ -1,3 +1,5 @@
+// routes/purchase.routes.js
+
 const express = require("express");
 const router = express.Router();
 const purchaseController = require("../controllers/purchase.controller");
@@ -6,29 +8,82 @@ const { authenticateUser, verifyRole } = require("../middleware/authMiddleware")
 // Toutes les routes nécessitent une authentification
 router.use(authenticateUser);
 
-// IMPORTANT: Les routes spécifiques doivent être avant les routes avec paramètres
-// Récupérer la fourchette de prix
+// ==================== ROUTES PUBLIQUES (après authentification) ====================
+
+/**
+ * GET /purchase/price-range - Récupérer la fourchette de prix pour un produit
+ * Accessible à tous les utilisateurs authentifiés
+ * Query params: productType, tradeType
+ */
 router.get("/price-range", purchaseController.getPriceRange);
 
-// Récupérer ses propres demandes (client)
+// ==================== ROUTES POUR CLIENTS ====================
+
+/**
+ * GET /purchase/lot/:lotId - Récupérer les informations d'achat d'un lot spécifique
+ * Accessible uniquement aux clients
+ * Permet de voir le poids disponible et les fourchettes de prix
+ */
+router.get("/lot/:lotId", verifyRole("client"), purchaseController.getLotPurchaseInfo);
+
+/**
+ * GET /purchase/requests/my - Récupérer ses propres demandes d'achat
+ * Accessible uniquement aux clients
+ * Query params optionnels: status (en_attente, approuve, refuse)
+ */
 router.get("/requests/my", verifyRole("client"), purchaseController.getClientRequests);
 
-// Récupérer toutes les demandes (admin)
-router.get("/requests/all", verifyRole("admin"), purchaseController.getAllRequests);
-
-// Créer une demande (client)
+/**
+ * POST /purchase/requests - Créer une nouvelle demande d'achat
+ * Accessible uniquement aux clients
+ * Body: { lotId, productType, quantity, tradeType, proposedPrice }
+ */
 router.post("/requests", verifyRole("client"), purchaseController.createRequest);
 
-// Modifier une demande (client)
+/**
+ * PUT /purchase/requests/:requestId - Modifier une demande existante
+ * Accessible uniquement aux clients (seulement si en attente)
+ * Body: champs à modifier (quantity, proposedPrice)
+ */
 router.put("/requests/:requestId", verifyRole("client"), purchaseController.updateRequest);
 
-// Supprimer une demande (client)
+/**
+ * DELETE /purchase/requests/:requestId - Supprimer une demande
+ * Accessible uniquement aux clients (seulement si en attente)
+ */
 router.delete("/requests/:requestId", verifyRole("client"), purchaseController.deleteRequest);
 
-// Approuver une demande (admin)
+// ==================== ROUTES POUR ADMINISTRATEURS ====================
+
+/**
+ * GET /purchase/requests/all - Récupérer toutes les demandes d'achat
+ * Accessible uniquement aux administrateurs
+ * Query params optionnels: status (en_attente, approuve, refuse)
+ */
+router.get("/requests/all", verifyRole("admin"), purchaseController.getAllRequests);
+
+/**
+ * PUT /purchase/requests/:requestId/approve - Approuver une demande
+ * Accessible uniquement aux administrateurs
+ * Met à jour le stock du lot automatiquement
+ */
 router.put("/requests/:requestId/approve", verifyRole("admin"), purchaseController.approveRequest);
 
-// Refuser une demande (admin)
+/**
+ * PUT /purchase/requests/:requestId/reject - Refuser une demande
+ * Accessible uniquement aux administrateurs
+ * Body optionnel: { comment }
+ */
 router.put("/requests/:requestId/reject", verifyRole("admin"), purchaseController.rejectRequest);
+
+// ==================== ROUTES POUR RESPONSABLES (optionnel) ====================
+
+/**
+ * Si vous voulez que les responsables puissent aussi voir les demandes
+ * Décommentez ces routes si nécessaire
+ */
+// router.get("/requests/all", verifyRole("responsable", "admin"), purchaseController.getAllRequests);
+// router.put("/requests/:requestId/approve", verifyRole("responsable", "admin"), purchaseController.approveRequest);
+// router.put("/requests/:requestId/reject", verifyRole("responsable", "admin"), purchaseController.rejectRequest);
 
 module.exports = router;

@@ -1,10 +1,12 @@
+// controllers/analysis.controller.js
+
 const fs = require('fs');
 const path = require('path');
 const csv = require('csv-parser');
 const Lot = require('../models/Lot');
 const CSVFile = require('../models/CSVFile');
 const analysisService = require('../services/analysis.service');
-const pdfService = require('../services/pdf.service'); // IMPORTANT: Ajouter cette ligne
+const pdfService = require('../services/pdf.service');
 
 class AnalysisController {
   constructor() {
@@ -15,97 +17,230 @@ class AnalysisController {
     this.getAnalysisStats = this.getAnalysisStats.bind(this);
     this.getDetailedReport = this.getDetailedReport.bind(this);
     this.generateLotPDF = this.generateLotPDF.bind(this);
-    this.downloadLotPDF = this.downloadLotPDF.bind(this); // AJOUT: Lier la nouvelle méthode
+    this.downloadLotPDF = this.downloadLotPDF.bind(this);
     this.testOllama = this.testOllama.bind(this);
     this.detectProductTypeFromCategory = this.detectProductTypeFromCategory.bind(this);
     this.debugLots = this.debugLots.bind(this);
     this.publishLotReport = this.publishLotReport.bind(this);
     this.unpublishLotReport = this.unpublishLotReport.bind(this);
     this.getPublicLots = this.getPublicLots.bind(this);
+    this.debugCSVFile = this.debugCSVFile.bind(this);
   }
 
   /**
-   * Lit un fichier CSV avec le nouveau format de colonnes
+   * Fonction de debug pour analyser un fichier CSV
+   */
+  async debugCSVFile(req, res) {
+    try {
+      const { fileId } = req.params;
+      const userId = req.user.userId;
+
+      const csvFile = await CSVFile.findOne({
+        _id: fileId,
+        createdBy: userId
+      });
+
+      if (!csvFile) {
+        return res.status(404).json({
+          success: false,
+          message: "Fichier CSV non trouvé"
+        });
+      }
+
+      // Lire le fichier et afficher la structure
+      const results = [];
+      let headers = [];
+      
+      await new Promise((resolve, reject) => {
+        fs.createReadStream(csvFile.path)
+          .pipe(csv())
+          .on('headers', (headerList) => {
+            headers = headerList;
+            console.log('📋 Headers CSV:', headerList);
+          })
+          .on('data', (data) => {
+            if (results.length < 3) {
+              results.push(data);
+            }
+          })
+          .on('end', resolve)
+          .on('error', reject);
+      });
+
+      res.json({
+        success: true,
+        data: {
+          fileName: csvFile.originalName,
+          headers: headers,
+          samples: results
+        }
+      });
+
+    } catch (error) {
+      console.error('❌ Erreur debug:', error);
+      res.status(500).json({
+        success: false,
+        message: "Erreur lors du debug"
+      });
+    }
+  }
+
+  /**
+   * Lit un fichier CSV avec détection automatique du séparateur
    */
   async readCSVFile(filePath) {
     return new Promise((resolve, reject) => {
       const results = [];
       
-      fs.createReadStream(filePath)
-        .pipe(csv())
-        .on('data', (data) => {
-          // Afficher les premières lignes pour debug
-          if (results.length === 0) {
-            console.log('📄 Première ligne CSV brute:', JSON.stringify(data));
-          }
-
-          // CORRECTION IMPORTANTE: Utiliser les noms exacts des colonnes du CSV
-          const processed = {
-            // Identifiants
-            lotId: data.lot_id || '',
-            category: data.category || '',
-            
-            // Métadonnées temporelles
-            year: parseInt(data.annee) || 2026,
-            month: parseInt(data.mois) || 3,
-            quarter: data.trimestre || '',
-            
-            // Qualité
-            initialQuality: data.qualite_initiale || 'excellente',
-            
-            // Transport
-            originRegion: data.region_origine || '',
-            destinationRegion: data.region_destination || '',
-            transportMode: data.mode_transport || '',
-            distance: parseFloat(data.distance_km) || 0,
-            duration: parseFloat(data.duree_voyage) || 0,
-            
-            // Température
-            temperatureMin: parseFloat(data['temperature_mesuree-min'] || data.temperature_min) || 0,
-            temperatureMax: parseFloat(data['temperature_mesuree-max'] || data.temperature_max) || 0,
-
-            // HUMIDITÉ - CORRECTION: Utiliser les noms exacts des colonnes
-            humidityMin: parseFloat(data['humidite_%_mesure_min'] || data['humidite_%_min']) || 0,
-            humidityMax: parseFloat(data['humidite_%_mesure_max'] || data['humidite_%_max']) || 0,
-            
-            // Autres paramètres environnementaux
-            shock: parseFloat(data.choc_transport) || 0,
-            pressure: parseFloat(data.pression_hpa) || 0,
-            rain: parseFloat(data.pluie_mm) || 0,
-            sunExposure: (parseFloat(data.temps_exposition_soleil_h) || 0) * 60, // Conversion heures → minutes
-            ventilation: data.ventilation || '',
-            
-            // Données commerciales
-            weight: parseFloat(data.poids_kg) || 0,
-            purchasePrice: parseFloat(data.prix_achat_unitaire) || 0,
-            salePrice: parseFloat(data.prix_vente_unitaire) || 0,
-            transportCost: parseFloat(data.cout_transport_total) || 0,
-            margin: parseFloat(data.marge_brute) || 0,
-            marginPercent: parseFloat(data['marge_%'] || data.marge_percent) || 0,
-            
-            // Décision préexistante (optionnelle)
-            automaticDecision: data.decision_automatique || ''
-          };
+      // D'abord, détecter le séparateur
+      const firstLineStream = fs.createReadStream(filePath, { encoding: 'utf8' });
+      let firstLine = '';
+      let separator = ',';
+      
+      firstLineStream.on('data', (chunk) => {
+        firstLine += chunk;
+        const lines = firstLine.split('\n');
+        if (lines.length > 0 && lines[0].trim()) {
+          const line = lines[0];
+          const commaCount = (line.match(/,/g) || []).length;
+          const semicolonCount = (line.match(/;/g) || []).length;
           
-          results.push(processed);
-        })
-        .on('end', () => {
-          console.log(`📊 ${results.length} lots traités avec le nouveau format`);
-          if (results.length > 0) {
-            console.log('📋 Exemple de lot traité:', {
-              lotId: results[0].lotId,
-              humidityMin: results[0].humidityMin,
-              humidityMax: results[0].humidityMax,
-              temperatureMin: results[0].temperatureMin,
-              temperatureMax: results[0].temperatureMax
+          separator = semicolonCount > commaCount ? ';' : ',';
+          console.log(`🔍 Séparateur détecté: "${separator}" (virgules: ${commaCount}, points-virgules: ${semicolonCount})`);
+          
+          firstLineStream.destroy();
+          
+          // Lire tout le fichier avec le bon séparateur
+          const readStream = fs.createReadStream(filePath, { encoding: 'utf8' });
+          let headers = [];
+          let lineNumber = 0;
+          
+          const readline = require('readline');
+          const rl = readline.createInterface({
+            input: readStream,
+            crlfDelay: Infinity
+          });
+          
+          rl.on('line', (line) => {
+            if (lineNumber === 0) {
+              let rawHeaders = line.split(separator).map(h => h.trim());
+              rawHeaders[0] = rawHeaders[0].replace(/^\uFEFF/, '');
+              headers = rawHeaders;
+              console.log('📋 Headers détectés:', headers);
+              lineNumber++;
+              return;
+            }
+            
+            if (!line.trim()) {
+              lineNumber++;
+              return;
+            }
+            
+            const values = line.split(separator).map(v => v.trim());
+            const row = {};
+            
+            headers.forEach((header, index) => {
+              row[header] = values[index] || '';
             });
-          }
-          resolve(results);
-        })
-        .on('error', (error) => {
-          console.error('❌ Erreur lecture CSV:', error);
-          reject(error);
-        });
+            
+            if (results.length === 0) {
+              console.log('📄 Première ligne CSV brute:', JSON.stringify(row));
+              console.log('🔍 Clés disponibles:', Object.keys(row));
+            }
+            
+            const parseFrenchNumber = (value) => {
+              if (!value) return 0;
+              const strValue = String(value).replace(',', '.').trim();
+              const parsed = parseFloat(strValue);
+              return isNaN(parsed) ? 0 : parsed;
+            };
+            
+            const processed = {
+              lotId: row.lot_id || '',
+              category: row.category || '',
+              year: parseInt(row.annee) || 2026,
+              month: parseInt(row.mois) || 3,
+              quarter: row.trimestre || '',
+              initialQuality: row.qualite_initiale || 'excellente',
+              originRegion: row.region_origine || '',
+              destinationRegion: row.region_destination || '',
+              transportMode: row.mode_transport || '',
+              distance: parseFrenchNumber(row.distance_km),
+              duration: parseFrenchNumber(row.duree_voyage),
+              temperatureMin: parseFrenchNumber(row.temperature_mesuree_min || row['temperature_mesuree-min']),
+              temperatureMax: parseFrenchNumber(row.temperature_mesuree_max || row['temperature_mesuree-max']),
+              humidityMin: parseFrenchNumber(row.humidityMin),
+              humidityMax: parseFrenchNumber(row.humidityMax),
+              humidityThresholdMin: parseFrenchNumber(row['humidite_%_min']),
+              humidityThresholdMax: parseFrenchNumber(row['humidite_%_max']),
+              temperatureThresholdMin: parseFrenchNumber(row.temperature_min),
+              temperatureThresholdMax: parseFrenchNumber(row.temperature_max),
+              shock: parseFrenchNumber(row.choc_transport),
+              pressure: parseFrenchNumber(row.pression_hpa),
+              rain: parseFrenchNumber(row.pluie_mm),
+              sunExposure: parseFrenchNumber(row.temps_exposition_soleil_h) * 60,
+              ventilation: row.ventilation || '',
+              weight: parseFrenchNumber(row.poids_kg),
+              purchasePrice: parseFrenchNumber(row.prix_achat_unitaire),
+              salePrice: parseFrenchNumber(row.prix_vente_unitaire),
+              transportCost: parseFrenchNumber(row.cout_transport_total),
+              margin: parseFrenchNumber(row.marge_brute),
+              marginPercent: parseFrenchNumber(row['marge_%'] || row.marge_percent),
+              automaticDecision: row.decision_automatique || ''
+            };
+            
+            if (results.length === 0) {
+              console.log('📋 Lot traité - DÉTAIL:', {
+                lotId: processed.lotId,
+                choc_original: row.choc_transport,
+                choc_parse: processed.shock,
+                pression_original: row.pression_hpa,
+                pression_parse: processed.pressure,
+                pluie_original: row.pluie_mm,
+                pluie_parse: processed.rain,
+                temperature: `${processed.temperatureMin} - ${processed.temperatureMax}°C`,
+                humidity: `${processed.humidityMin} - ${processed.humidityMax}%`,
+                thresholds: {
+                  humidity: `${processed.humidityThresholdMin}-${processed.humidityThresholdMax}%`,
+                  temperature: `${processed.temperatureThresholdMin}-${processed.temperatureThresholdMax}°C`
+                }
+              });
+            }
+            
+            results.push(processed);
+            lineNumber++;
+          });
+          
+          rl.on('close', () => {
+            console.log(`📊 ${results.length} lots traités avec parsing français`);
+            
+            if (results.length > 0) {
+              const chocValues = results.map(r => r.shock).filter(v => v > 0);
+              console.log('📊 Statistiques choc:', {
+                min: Math.min(...chocValues),
+                max: Math.max(...chocValues),
+                moyenne: (chocValues.reduce((a, b) => a + b, 0) / chocValues.length).toFixed(2),
+                echantillon: results.slice(0, 3).map(r => ({
+                  lot: r.lotId,
+                  choc: r.shock
+                }))
+              });
+            }
+            
+            resolve(results);
+          });
+          
+          rl.on('error', (error) => {
+            console.error('❌ Erreur lecture CSV:', error);
+            reject(error);
+          });
+        }
+      });
+      
+      firstLineStream.on('error', (error) => {
+        console.error('❌ Erreur lecture première ligne:', error);
+        reject(error);
+      });
     });
   }
 
@@ -121,17 +256,16 @@ class AnalysisController {
     if (cat.includes('fraise')) return 'fraise';
     if (cat.includes('datte')) return 'datte';
     
-    // Détection par préfixe
     if (cat.startsWith('tom')) return 'tomate';
     if (cat.startsWith('agr')) return 'agrume';
     if (cat.startsWith('fra')) return 'fraise';
     if (cat.startsWith('dat')) return 'datte';
     
-    return 'tomate'; // Par défaut
+    return 'tomate';
   }
 
   /**
-   * Analyse un fichier CSV complet
+   * Analyse un fichier CSV complet - VERSION CORRIGÉE
    */
   async analyzeCSVFile(req, res) {
     try {
@@ -140,8 +274,8 @@ class AnalysisController {
       const io = req.io;
 
       console.log(`📂 Début de l'analyse pour le fichier: ${fileId}`);
+      console.log(`👤 Utilisateur ID: ${userId}`);
 
-      // Récupérer le fichier CSV
       const csvFile = await CSVFile.findOne({
         _id: fileId,
         createdBy: userId
@@ -164,7 +298,6 @@ class AnalysisController {
       console.log(`📂 Analyse du fichier: ${csvFile.originalName}`);
       console.log(`📁 Chemin: ${csvFile.path}`);
 
-      // Lire le CSV avec le mapping
       const lots = await this.readCSVFile(csvFile.path);
       
       if (lots.length === 0) {
@@ -174,8 +307,6 @@ class AnalysisController {
         });
       }
 
-      // ========== CORRECTION DOUBLONS ==========
-      // Supprimer les anciens lots avec les mêmes IDs pour ce fichier
       const existingLotIds = lots.map(l => l.lotId).filter(id => id);
       if (existingLotIds.length > 0) {
         const deleteResult = await Lot.deleteMany({ 
@@ -186,7 +317,6 @@ class AnalysisController {
         console.log(`🗑️ ${deleteResult.deletedCount} anciens lots avec IDs en conflit supprimés`);
       }
 
-      // Supprimer les anciens résultats pour ce fichier (au cas où)
       const deletedCount = await Lot.deleteMany({ 
         csvFileId: csvFile._id,
         analyzedBy: userId 
@@ -194,33 +324,36 @@ class AnalysisController {
       if (deletedCount.deletedCount > 0) {
         console.log(`🗑️ ${deletedCount.deletedCount} anciens lots supprimés (tous)`);
       }
-      // =========================================
 
-      // Déterminer le type de produit à partir de la catégorie du premier lot
       const productType = lots[0]?.category ? 
         this.detectProductTypeFromCategory(lots[0].category) : 'tomate';
 
       console.log(`📦 Type de produit détecté: ${productType}`);
 
-      // Informer le client que l'analyse commence
-      if (io) {
+      if (io && userId) {
         io.to(`user_${userId}`).emit('analysis:started', {
           fileId,
           fileName: csvFile.originalName,
           totalLots: lots.length,
           productType
         });
+        console.log(`📡 analysis:started émis pour user_${userId}`);
       }
 
-      // Analyser avec le service
       console.log(`🤖 Génération des rapports avec Ollama pour ${productType}...`);
-      const lotsWithReports = await analysisService.analyzeBatch(lots, productType);
+      console.log(`📤 Appel de analyzeBatch avec userId: ${userId}`);
+      
+      const lotsWithReports = await analysisService.analyzeBatch(
+        lots, 
+        productType, 
+        io, 
+        userId,
+        fileId
+      );
 
-      // Sauvegarder dans MongoDB
       const savedLots = [];
       for (const lot of lotsWithReports) {
         try {
-          // Générer un ID unique si le lot n'en a pas
           const uniqueLotId = lot.lotId || `LOT-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
           
           const lotDoc = new Lot({
@@ -269,9 +402,9 @@ class AnalysisController {
           
           await lotDoc.save();
           savedLots.push(lotDoc);
+          console.log(`✅ Lot ${lot.lotId} sauvegardé`);
         } catch (saveError) {
           console.error('❌ Erreur sauvegarde lot:', saveError.message);
-          // Si erreur de duplication, essayer avec un ID unique
           if (saveError.code === 11000) {
             try {
               const lotDoc = new Lot({
@@ -327,7 +460,6 @@ class AnalysisController {
         }
       }
 
-      // Mettre à jour le fichier CSV
       csvFile.analyzedAt = new Date();
       csvFile.lotCount = savedLots.length;
       csvFile.productType = productType;
@@ -339,16 +471,17 @@ class AnalysisController {
 
       console.log(`✅ Analyse terminée: ${savedLots.length} lots (${sains} sains, ${endommages} endommagés, ${erreurs} erreurs)`);
 
-      // Informer le client que l'analyse est terminée
-      if (io) {
+      if (io && userId) {
         io.to(`user_${userId}`).emit('analysis:completed', {
           fileId,
           fileName: csvFile.originalName,
           productType,
           totalLots: savedLots.length,
           stats: { sains, endommages, erreurs },
-          deletedCount: deletedCount.deletedCount
+          deletedCount: deletedCount.deletedCount,
+          duration: ((Date.now() - new Date(csvFile.analyzedAt).getTime()) / 1000).toFixed(2)
         });
+        console.log(`📡 analysis:completed émis pour user_${userId}`);
       }
 
       res.json({
@@ -414,12 +547,10 @@ class AnalysisController {
     try {
       const userId = req.user.userId;
 
-      // Récupérer tous les lots de l'utilisateur
       const lots = await Lot.find({ analyzedBy: userId });
       
       const total = lots.length;
       
-      // Compter manuellement
       let sains = 0;
       let endommages = 0;
       let erreurs = 0;
@@ -543,7 +674,6 @@ class AnalysisController {
 
   /**
    * Génère un PDF de rapport pour un lot
-   * Note: Cette méthode est conservée pour compatibilité
    */
   async generateLotPDF(req, res) {
     try {
@@ -562,7 +692,6 @@ class AnalysisController {
         });
       }
 
-      // Utiliser la nouvelle méthode de téléchargement
       return this.downloadLotPDF(req, res);
 
     } catch (error) {
@@ -576,7 +705,6 @@ class AnalysisController {
 
   /**
    * Télécharge un rapport PDF pour un lot
-   * NOUVELLE MÉTHODE
    */
   async downloadLotPDF(req, res) {
     try {
@@ -597,21 +725,18 @@ class AnalysisController {
 
       console.log(`📄 Génération PDF pour le lot ${lot.lotId}...`);
 
-      // Générer le PDF
       const pdfBuffer = await pdfService.generateLotPDF(
         lot,
         lot.analysis,
         lot.detailedReport
       );
 
-      // Configurer les headers pour le téléchargement
       const filename = `rapport_${lot.lotId}_${new Date().toISOString().split('T')[0]}.pdf`;
       
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       res.setHeader('Content-Length', pdfBuffer.length);
 
-      // Envoyer le PDF
       res.send(pdfBuffer);
 
       console.log(`✅ PDF généré et envoyé: ${filename}`);
@@ -641,8 +766,6 @@ class AnalysisController {
     }
   }
 
-  // ==================== MÉTHODES DE PUBLICATION ====================
-
   /**
    * Publie un rapport pour le rendre visible aux clients
    */
@@ -668,7 +791,6 @@ class AnalysisController {
       lot.publishedBy = userId;
       await lot.save();
 
-      // Notifier via WebSocket
       if (req.io) {
         req.io.emit('report:published', {
           lotId: lot._id,
@@ -726,7 +848,6 @@ class AnalysisController {
       lot.publishedBy = null;
       await lot.save();
 
-      // Notifier via WebSocket
       if (req.io) {
         req.io.emit('report:unpublished', {
           lotId: lot._id,
@@ -811,5 +932,4 @@ class AnalysisController {
   }
 }
 
-// Exporter une instance unique
 module.exports = new AnalysisController();

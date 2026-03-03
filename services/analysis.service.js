@@ -1,3 +1,5 @@
+// services/analysis.service.js
+
 const axios = require('axios');
 const ollamaService = require('./ollama.service');
 
@@ -135,6 +137,12 @@ class AnalysisService {
    * Analyse un lot de tomates avec les nouveaux seuils
    */
   analyzeTomatoLot(lot) {
+    console.log('🍅 Analyse lot tomate:', {
+      lotId: lot.lotId,
+      humidityMesuree: `${lot.humidityMin} - ${lot.humidityMax}%`,
+      temperatureMesuree: `${lot.temperatureMin} - ${lot.temperatureMax}°C`
+    });
+
     const issues = [];
     const details = {};
 
@@ -162,31 +170,37 @@ class AnalysisService {
       details.duration = "conforme";
     }
 
-    // Température min 12°C, max 20°C
-    if (lot.temperatureMin < 12) {
-      issues.push(`🌡️ Température minimale trop basse (${lot.temperatureMin}°C < 12°C)`);
+    // Température mesurée vs seuils
+    const tempThresholdMin = 12;
+    const tempThresholdMax = 20;
+    
+    if (lot.temperatureMin < tempThresholdMin) {
+      issues.push(`🌡️ Température minimale trop basse (${lot.temperatureMin}°C < ${tempThresholdMin}°C)`);
       details.temperatureMin = "non_conforme";
     } else {
       details.temperatureMin = "conforme";
     }
     
-    if (lot.temperatureMax > 20) {
-      issues.push(`🌡️ Température maximale trop élevée (${lot.temperatureMax}°C > 20°C)`);
+    if (lot.temperatureMax > tempThresholdMax) {
+      issues.push(`🌡️ Température maximale trop élevée (${lot.temperatureMax}°C > ${tempThresholdMax}°C)`);
       details.temperatureMax = "non_conforme";
     } else {
       details.temperatureMax = "conforme";
     }
 
-    // Humidité 80-90%
-    if (lot.humidityMin < 80) {
-      issues.push(`💧 Humidité minimale trop basse (${lot.humidityMin}% < 80%)`);
+    // Humidité mesurée vs seuils
+    const humidityThresholdMin = 80;
+    const humidityThresholdMax = 90;
+    
+    if (lot.humidityMin < humidityThresholdMin) {
+      issues.push(`💧 Humidité minimale trop basse (${lot.humidityMin}% < ${humidityThresholdMin}%)`);
       details.humidityMin = "non_conforme";
     } else {
       details.humidityMin = "conforme";
     }
     
-    if (lot.humidityMax > 90) {
-      issues.push(`💧 Humidité maximale trop élevée (${lot.humidityMax}% > 90%)`);
+    if (lot.humidityMax > humidityThresholdMax) {
+      issues.push(`💧 Humidité maximale trop élevée (${lot.humidityMax}% > ${humidityThresholdMax}%)`);
       details.humidityMax = "non_conforme";
     } else {
       details.humidityMax = "conforme";
@@ -234,6 +248,16 @@ class AnalysisService {
 
     const decision = issues.length === 0 ? "SAIN" : "ENDOMMAGÉ";
     const riskLevel = issues.length >= 3 ? "Élevé" : issues.length >= 1 ? "Moyen" : "Faible";
+
+    console.log('📊 Résultat analyse:', {
+      lotId: lot.lotId,
+      issues: issues.length,
+      decision,
+      details: {
+        temperature: `${lot.temperatureMin}-${lot.temperatureMax}°C ${details.temperatureMin === 'conforme' && details.temperatureMax === 'conforme' ? '✅' : '❌'}`,
+        humidity: `${lot.humidityMin}-${lot.humidityMax}% ${details.humidityMin === 'conforme' && details.humidityMax === 'conforme' ? '✅' : '❌'}`
+      }
+    });
 
     return {
       issues,
@@ -507,7 +531,6 @@ class AnalysisService {
 
     const productName = productNames[productType] || productType;
 
-    // Construction du rapport
     let report = `📄 Rapport d'analyse – Lot ${lot.lotId}\n\n`;
     report += `Catégorie : ${productName}\n`;
     report += `Décision automatique : `;
@@ -622,7 +645,6 @@ class AnalysisService {
     const ventOk = lot.ventilation && lot.ventilation.toLowerCase() !== 'non';
     report += `→ Résultat : ${ventOk ? `✅ Conforme` : `❌ Non conforme`}\n\n`;
 
-    // Causes de non-conformité
     if (analysisResult.issues.length > 0) {
       report += `⚠️ Cause(s) de non-conformité\n`;
       report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
@@ -632,7 +654,6 @@ class AnalysisService {
       report += `\n`;
     }
 
-    // Conclusion
     report += `📌 Conclusion finale\n`;
     report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
     
@@ -675,16 +696,13 @@ class AnalysisService {
 
   /**
    * Analyse un lot avec Ollama et génère un rapport détaillé
+   * Version corrigée avec événement analysis:new-report
    */
   async analyzeLot(lotData, productType = "tomate", io = null, userId = null, fileId = null, lotIndex = null, totalLots = null) {
     try {
-      // 1. Analyse par règles d'abord
       const ruleAnalysis = this.analyzeLotByRules(lotData, productType);
-      
-      // 2. Génération du rapport détaillé
       const detailedReport = this.generateDetailedReport(lotData, ruleAnalysis, productType);
       
-      // 3. Génération du rapport Ollama (optionnel)
       let ollamaReport = {};
       try {
         ollamaReport = await ollamaService.generateLotReport(
@@ -711,19 +729,27 @@ class AnalysisService {
         analyzedAt: new Date()
       };
 
-      // Émettre le résultat individuel via WebSocket
+      // Émettre le résultat individuel via WebSocket - CORRECTION
       if (io && userId) {
-        io.to(`user_${userId}`).emit('analysis:lot-completed', {
+        const reportData = {
           lotId: lotData.lotId || `LOT-${Date.now()}`,
           productType,
           analysis: ruleAnalysis,
-          ollamaReport,
+          lotData,
+          detailedReport,
+          aiReport: ollamaReport,
+          fileName: fileId,
           progress: {
             current: lotIndex,
             total: totalLots,
             completed: true
-          }
-        });
+          },
+          timestamp: new Date()
+        };
+        
+        io.to(`user_${userId}`).emit('analysis:new-report', reportData);
+        
+        console.log(`📡 analysis:new-report émis pour lot ${reportData.lotId} (${lotIndex}/${totalLots})`);
       }
 
       return result;
@@ -731,11 +757,9 @@ class AnalysisService {
     } catch (error) {
       console.error('❌ Erreur analyse lot:', error.message);
       
-      // Fallback
       const ruleAnalysis = this.analyzeLotByRules(lotData, productType);
       const detailedReport = this.generateDetailedReport(lotData, ruleAnalysis, productType);
       
-      // Émettre l'erreur via WebSocket
       if (io && userId) {
         io.to(`user_${userId}`).emit('analysis:lot-error', {
           lotId: lotData.lotId || `LOT-${Date.now()}`,
@@ -760,6 +784,7 @@ class AnalysisService {
 
   /**
    * Analyse plusieurs lots avec mise à jour progressive
+   * Version corrigée avec événements cohérents
    */
   async analyzeBatch(lots, productType = "tomate", io = null, userId = null, fileId = null) {
     console.log(`📦 Analyse progressive de ${lots.length} lots (produit: ${productType})...`);
@@ -767,7 +792,6 @@ class AnalysisService {
     const results = [];
     const startTime = Date.now();
 
-    // Émettre le début de l'analyse
     if (io && userId) {
       io.to(`user_${userId}`).emit('analysis:started', {
         fileId,
@@ -781,9 +805,8 @@ class AnalysisService {
       try {
         console.log(`📊 Lot ${i + 1}/${lots.length} en cours...`);
         
-        // Émettre la progression
         if (io && userId) {
-          io.to(`user_${userId}`).emit('analysis:progress', {
+          io.to(`user_${userId}`).emit('analysis:batch-progress', {
             current: i + 1,
             total: lots.length,
             percentage: Math.round(((i + 1) / lots.length) * 100),
@@ -791,7 +814,7 @@ class AnalysisService {
             currentLot: lots[i].lotId || `Lot ${i + 1}`
           });
         }
-        
+        console.log(`📤 Envoi lot ${i+1} avec userId:`, userId); // AJOUTER CE LOG
         const result = await this.analyzeLot(
           lots[i], 
           productType, 
@@ -803,14 +826,11 @@ class AnalysisService {
         );
         
         results.push(result);
-
-        // Petit délai pour éviter de surcharger
         await new Promise(resolve => setTimeout(resolve, 50));
         
       } catch (error) {
         console.error(`❌ Erreur sur lot ${i + 1}:`, error.message);
         
-        // Fallback
         const ruleAnalysis = this.analyzeLotByRules(lots[i], productType);
         const detailedReport = this.generateDetailedReport(lots[i], ruleAnalysis, productType);
         
@@ -828,7 +848,6 @@ class AnalysisService {
         };
         results.push(fallbackResult);
 
-        // Émettre l'erreur
         if (io && userId) {
           io.to(`user_${userId}`).emit('analysis:lot-error', {
             lotId: lots[i].lotId || `LOT-${Date.now()}`,
@@ -845,12 +864,10 @@ class AnalysisService {
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
     console.log(`✅ Analyse batch terminée : ${results.length} lots traités en ${duration}s`);
     
-    // Statistiques
     const sains = results.filter(r => r.analysis?.decision === "SAIN").length;
     const endommages = results.filter(r => r.analysis?.decision === "ENDOMMAGÉ").length;
     const erreurs = results.filter(r => r.analysis?.decision === "ERREUR").length;
 
-    // Émettre la fin de l'analyse
     if (io && userId) {
       io.to(`user_${userId}`).emit('analysis:completed', {
         fileId,

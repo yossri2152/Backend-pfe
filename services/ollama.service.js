@@ -1,3 +1,5 @@
+// services/ollama.service.js
+
 const axios = require('axios');
 
 class OllamaService {
@@ -8,8 +10,9 @@ class OllamaService {
 
   /**
    * Génère un rapport d'analyse pour un lot avec Ollama
+   * Version corrigée - SANS émissions WebSocket (c'est analysis.service.js qui s'en charge)
    */
-  async generateLotReport(lotData, analysisResult, productType = "tomate", io = null, userId = null, fileId = null) {
+  async generateLotReport(lotData, analysisResult, productType = "tomate", io = null, userId = null, fileId = null, lotIndex = null, totalLots = null) {
     try {
       const prompt = this.buildPrompt(lotData, analysisResult, productType);
       
@@ -38,31 +41,8 @@ class OllamaService {
           parsed = JSON.parse(jsonMatch[0]);
           console.log('✅ Rapport JSON généré avec succès');
           
-          // Émettre un événement WebSocket si disponible
-          if (io && userId && fileId) {
-            const reportData = {
-              lotId: lotData.lotId || `LOT-${Date.now()}`,
-              productType,
-              analysis: analysisResult,
-              aiReport: parsed,
-              progress: {
-                current: 1,
-                total: 1,
-                completed: true
-              }
-            };
-            
-            // Émettre à l'utilisateur spécifique
-            io.to(`user_${userId}`).emit('analysis:progress', reportData);
-            
-            // Émettre à tous (pour l'admin)
-            io.emit('analysis:new-report', {
-              ...reportData,
-              userId
-            });
-            
-            console.log(`📡 Rapport temps réel envoyé pour le lot ${reportData.lotId}`);
-          }
+          // NE PAS ÉMETTRE D'ÉVÉNEMENT ICI
+          // Retourner simplement le rapport
           
           return parsed;
         } catch (e) {
@@ -82,15 +62,7 @@ class OllamaService {
         parsed = JSON.parse(cleaned);
         console.log('✅ JSON extrait après nettoyage');
         
-        if (io && userId && fileId) {
-          io.to(`user_${userId}`).emit('analysis:progress', {
-            lotId: lotData.lotId || `LOT-${Date.now()}`,
-            productType,
-            analysis: analysisResult,
-            aiReport: parsed,
-            progress: { current: 1, total: 1, completed: true }
-          });
-        }
+        // NE PAS ÉMETTRE D'ÉVÉNEMENT ICI
         
         return parsed;
       } catch (e) {
@@ -99,115 +71,21 @@ class OllamaService {
       
       // Fallback
       const fallbackReport = this.generateFallbackReport(lotData, analysisResult);
+      console.log('⚠️ Utilisation du rapport fallback');
       
-      if (io && userId && fileId) {
-        io.to(`user_${userId}`).emit('analysis:progress', {
-          lotId: lotData.lotId || `LOT-${Date.now()}`,
-          productType,
-          analysis: analysisResult,
-          aiReport: fallbackReport,
-          progress: { current: 1, total: 1, completed: true }
-        });
-      }
+      // NE PAS ÉMETTRE D'ÉVÉNEMENT ICI
       
       return fallbackReport;
 
     } catch (error) {
       console.error('❌ Erreur Ollama:', error.message);
-      return this.generateFallbackReport(lotData, analysisResult);
+      
+      const fallbackReport = this.generateFallbackReport(lotData, analysisResult);
+      
+      // NE PAS ÉMETTRE D'ÉVÉNEMENT ICI
+      
+      return fallbackReport;
     }
-  }
-
-  /**
-   * Analyse plusieurs lots en batch avec mise à jour progressive
-   */
-  async analyzeBatch(lots, analyzeRuleFunction, productType = "tomate", io = null, userId = null, fileId = null) {
-    console.log(`📦 Analyse progressive de ${lots.length} lots avec Ollama (produit: ${productType})...`);
-    
-    const results = [];
-    const startTime = Date.now();
-
-    for (let i = 0; i < lots.length; i++) {
-      try {
-        const lot = lots[i];
-        console.log(`📊 Lot ${i + 1}/${lots.length} en cours...`);
-        
-        // Émettre la progression
-        if (io && userId) {
-          io.to(`user_${userId}`).emit('analysis:batch-progress', {
-            current: i + 1,
-            total: lots.length,
-            percentage: Math.round(((i + 1) / lots.length) * 100),
-            status: 'processing',
-            currentLot: lot.lotId || `Lot ${i + 1}`
-          });
-        }
-        
-        // Analyse par règles
-        const ruleAnalysis = analyzeRuleFunction(lot);
-        
-        // Génération du rapport Ollama avec WebSocket
-        const aiReport = await this.generateLotReport(
-          lot, 
-          ruleAnalysis, 
-          productType, 
-          io, 
-          userId, 
-          fileId
-        );
-        
-        const result = {
-          ...lot,
-          analysis: ruleAnalysis,
-          aiReport,
-          analyzedAt: new Date()
-        };
-        
-        results.push(result);
-
-        // Petit délai pour éviter de surcharger Ollama
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-      } catch (error) {
-        console.error(`❌ Erreur sur lot ${i + 1}:`, error.message);
-        
-        // Fallback
-        const ruleAnalysis = analyzeRuleFunction(lots[i]);
-        const aiReport = this.generateFallbackReport(lots[i], ruleAnalysis);
-        
-        const result = {
-          ...lots[i],
-          analysis: ruleAnalysis,
-          aiReport,
-          analyzedAt: new Date()
-        };
-        results.push(result);
-        
-        if (io && userId) {
-          io.to(`user_${userId}`).emit('analysis:progress', {
-            lotId: lots[i].lotId || `LOT-${Date.now()}`,
-            productType,
-            analysis: ruleAnalysis,
-            aiReport,
-            error: error.message
-          });
-        }
-      }
-    }
-
-    const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-    console.log(`✅ Analyse batch terminée : ${results.length} lots traités en ${duration}s`);
-    
-    // Émettre la fin de l'analyse
-    if (io && userId) {
-      io.to(`user_${userId}`).emit('analysis:completed', {
-        total: results.length,
-        duration,
-        fileId
-      });
-    }
-    
-    return results;
   }
 
   /**
@@ -262,76 +140,6 @@ Remplis les champs avec des analyses pertinentes basées sur les données fourni
   }
 
   /**
-   * Extrait les premières phrases d'un texte
-   */
-  extractSentences(text, count = 2) {
-    const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 20);
-    if (sentences.length > 0) {
-      return sentences.slice(0, count).join('. ') + '.';
-    }
-    return "Analyse du lot effectuée.";
-  }
-
-  /**
-   * Extrait le niveau de risque du texte
-   */
-  extractRiskLevel(text, analysisResult) {
-    const textLower = text.toLowerCase();
-    if (textLower.includes('élevé') || textLower.includes('élevée')) return "Élevé";
-    if (textLower.includes('moyen')) return "Moyen";
-    if (textLower.includes('faible')) return "Faible";
-    return analysisResult.riskLevel || "Moyen";
-  }
-
-  /**
-   * Extrait les recommandations du texte
-   */
-  extractRecommendations(text) {
-    const recos = [];
-    const lines = text.split('\n');
-    
-    for (const line of lines) {
-      if (line.match(/^[-*•]\s+/) || line.match(/^\d+\.\s+/) || line.match(/^[Rr]ecommandation/)) {
-        const reco = line.replace(/^[-*•\d.\s]+/, '').trim();
-        if (reco.length > 10 && !reco.includes('{') && !reco.includes('}')) {
-          recos.push(reco);
-        }
-      }
-    }
-    
-    return recos;
-  }
-
-  /**
-   * Construit des détails par défaut basés sur l'analyse par règles
-   */
-  buildDefaultDetails(lotData, analysisResult) {
-    return {
-      temperature: analysisResult.details?.temperature === "optimal" 
-        ? `Température optimale (${lotData.temperature}°C)` 
-        : `⚠️ ${analysisResult.issues.find(i => i.includes('🌡️')) || `Température ${lotData.temperature}°C`}`,
-      humidite: analysisResult.details?.humidity === "optimal"
-        ? `Humidité optimale (${lotData.humidity}%)`
-        : `⚠️ ${analysisResult.issues.find(i => i.includes('💧')) || `Humidité ${lotData.humidity}%`}`,
-      pression: analysisResult.details?.pressure === "optimal"
-        ? `Pression normale (${lotData.pressure} hPa)`
-        : `⚠️ Pression anormale (${lotData.pressure} hPa)`,
-      pluie: analysisResult.details?.rain === "optimal"
-        ? `Pluie normale (${lotData.rain} mm)`
-        : `⚠️ ${analysisResult.issues.find(i => i.includes('🌧️')) || `Pluie ${lotData.rain} mm`}`,
-      duree: analysisResult.details?.duration === "optimal"
-        ? `Durée acceptable (${lotData.duration} jours)`
-        : `⚠️ ${analysisResult.issues.find(i => i.includes('⏱️')) || `Durée ${lotData.duration} jours`}`,
-      choc: analysisResult.details?.shock === "optimal"
-        ? `Pas de choc détecté`
-        : `⚠️ ${analysisResult.issues.find(i => i.includes('🚛')) || 'Choc détecté'}`,
-      soleil: analysisResult.details?.sunExposure === "optimal"
-        ? `Exposition solaire normale (${lotData.sunExposure} min)`
-        : `⚠️ ${analysisResult.issues.find(i => i.includes('☀️')) || `Exposition ${lotData.sunExposure} min`}`
-    };
-  }
-
-  /**
    * Génère un rapport de fallback quand Ollama échoue
    */
   generateFallbackReport(lotData, analysisResult) {
@@ -363,18 +171,6 @@ Remplis les champs avec des analyses pertinentes basées sur les données fourni
       ],
       conclusion: analysisResult.decision
     };
-  }
-
-  /**
-   * Analyse un lot avec fallback
-   */
-  async analyzeLot(lotData, analysisResult, productType = "tomate", io = null, userId = null, fileId = null) {
-    try {
-      return await this.generateLotReport(lotData, analysisResult, productType, io, userId, fileId);
-    } catch (error) {
-      console.log('⚠️ Utilisation du fallback pour ce lot');
-      return this.generateFallbackReport(lotData, analysisResult);
-    }
   }
 
   /**

@@ -1,9 +1,41 @@
+// routes/csvRoutes.js
+
 const express = require("express");
 const router = express.Router();
+const multer = require('multer');
+const path = require('path');
 const csvController = require("../controllers/csvController");
 const { authenticateUser, verifyRole } = require("../middleware/authMiddleware");
 const upload = require("../middlewares/upload");
 const CSVFile = require("../models/CSVFile");
+
+// Configuration de multer pour l'upload (fallback si upload middleware n'existe pas)
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, 'uploads/');
+    },
+    filename: function (req, file, cb) {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, 'file-' + uniqueSuffix + path.extname(file.originalname));
+    }
+});
+
+// Filtrer pour n'accepter que les fichiers CSV
+const fileFilter = (req, file, cb) => {
+    if (file.mimetype === 'text/csv' || file.originalname.endsWith('.csv')) {
+        cb(null, true);
+    } else {
+        cb(new Error('Seuls les fichiers CSV sont autorisés'), false);
+    }
+};
+
+const uploadMulter = multer({ 
+    storage: storage,
+    fileFilter: fileFilter,
+    limits: {
+        fileSize: 10 * 1024 * 1024 // Limite à 10MB
+    }
+});
 
 // ==================== MIDDLEWARE DE VÉRIFICATION ====================
 
@@ -106,6 +138,17 @@ router.get("/all", verifyRole("admin"), csvController.getAllCSVFiles);
  */
 router.get("/", verifyRole("responsable", "admin"), csvController.getUserCSVFiles);
 
+/**
+ * POST /csv/validate - Valider la structure d'un fichier CSV sans le sauvegarder
+ * Accessible à tous les utilisateurs authentifiés
+ */
+router.post(
+  "/validate",
+  verifyRole("responsable", "admin"),
+  upload.single("file"),
+  csvController.validateCSVColumns
+);
+
 // ==================== ROUTES DE LECTURE (accessibles à responsable et admin) ====================
 
 /**
@@ -147,6 +190,7 @@ router.get(
  * POST /csv/upload - Uploader un nouveau fichier (CSV ou Excel)
  * Accessible à : responsable, admin
  * Admin peut uploader des fichiers qui seront visibles par tous
+ * AVEC VALIDATION DES COLONNES REQUISES
  */
 router.post(
   "/upload",
@@ -155,11 +199,23 @@ router.post(
   csvController.uploadCSVFile
 );
 
+/**
+ * Alternative avec multer direct si le middleware upload ne fonctionne pas
+ * POST /csv/upload-direct - Upload avec validation des colonnes
+ 
+router.post(
+  "/upload-direct",
+  verifyRole("responsable", "admin"),
+  uploadMulter.single("file"),
+  csvController.uploadCSV // Assurez-vous que cette fonction existe dans csvController
+);*/
+
 // ==================== ROUTES DE MODIFICATION (uniquement responsable et propriétaire) ====================
 
 /**
  * PUT /csv/:id - Mettre à jour un fichier (remplacer)
  * Uniquement : responsable et propriétaire du fichier
+ * AVEC VALIDATION DES COLONNES REQUISES
  */
 router.put(
   "/:id",
@@ -214,5 +270,160 @@ router.delete(
   checkFileOwnership,
   csvController.deleteRow
 );
+
+// ==================== ROUTES POUR COMPATIBILITÉ AVEC LE FRONTEND ====================
+// Ces routes sont des alias des routes existantes pour correspondre à ce que le frontend attend
+
+/**
+ * GET /csv/files - Alias pour getUserCSVFiles (compatibilité frontend)
+ * Responsable : voit ses fichiers
+ */
+router.get(
+  "/files", 
+  verifyRole("responsable", "admin"), 
+  csvController.getUserCSVFiles
+);
+
+/**
+ * GET /csv/files/:id - Alias pour getCSVFileInfo
+ */
+router.get(
+  "/files/:id", 
+  verifyRole("responsable", "admin"), 
+  checkFileAccess, 
+  csvController.getCSVFileInfo
+);
+
+/**
+ * GET /csv/files/:id/data - Alias pour getCSVFileData
+ */
+router.get(
+  "/files/:id/data", 
+  verifyRole("responsable", "admin"), 
+  checkFileAccess, 
+  csvController.getCSVFileData
+);
+
+/**
+ * GET /csv/files/:id/download - Alias pour downloadCSVFile
+ */
+router.get(
+  "/files/:id/download", 
+  verifyRole("responsable", "admin"), 
+  checkFileAccess, 
+  csvController.downloadCSVFile
+);
+
+/**
+ * DELETE /csv/files/:id - Alias pour deleteCSVFile
+ */
+router.delete(
+  "/files/:id", 
+  verifyRole("responsable"), 
+  checkFileOwnership, 
+  csvController.deleteCSVFile
+);
+
+/**
+ * POST /csv/files/:id/rows - Alias pour addRow
+ */
+router.post(
+  "/files/:id/rows", 
+  verifyRole("responsable"), 
+  checkFileOwnership, 
+  csvController.addRow
+);
+
+/**
+ * PUT /csv/files/:id/rows/:rowIndex - Alias pour updateRow
+ */
+router.put(
+  "/files/:id/rows/:rowIndex", 
+  verifyRole("responsable"), 
+  checkFileOwnership, 
+  csvController.updateRow
+);
+
+/**
+ * DELETE /csv/files/:id/rows/:rowIndex - Alias pour deleteRow
+ */
+router.delete(
+  "/files/:id/rows/:rowIndex", 
+  verifyRole("responsable"), 
+  checkFileOwnership, 
+  csvController.deleteRow
+);
+
+// ==================== ROUTE DE TEST (optionnelle) ====================
+
+/**
+ * GET /csv/test - Route de test pour vérifier que le routeur fonctionne
+ */
+router.get("/test", (req, res) => {
+  res.json({
+    success: true,
+    message: "Route CSV fonctionnelle",
+    user: req.user ? req.user.email : "Non authentifié",
+    role: req.user ? req.user.role : "Aucun"
+  });
+});
+
+
+// routes/csvRoutes.js - Ajoutez cette route temporaire
+
+router.post("/debug-headers", upload.single("file"), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ message: 'Aucun fichier' });
+        }
+
+        const filePath = req.file.path;
+        
+        // Lire le fichier en mode binaire
+        const buffer = fs.readFileSync(filePath);
+        const content = buffer.toString('utf8');
+        const lines = content.split('\n');
+        const firstLine = lines[0];
+        
+        // Analyser chaque caractère du premier header
+        const firstHeader = firstLine.split(',')[0];
+        const charAnalysis = [];
+        
+        for (let i = 0; i < firstHeader.length; i++) {
+            charAnalysis.push({
+                index: i,
+                char: firstHeader[i],
+                charCode: firstHeader.charCodeAt(i),
+                hex: '0x' + firstHeader.charCodeAt(i).toString(16).padStart(4, '0'),
+                isBOM: firstHeader.charCodeAt(i) === 0xFEFF,
+                isSpace: firstHeader[i] === ' ',
+                isPrintable: firstHeader.charCodeAt(i) >= 32 && firstHeader.charCodeAt(i) <= 126
+            });
+        }
+        
+        // Nettoyer le fichier
+        fs.unlinkSync(filePath);
+        
+        res.json({
+            fileName: req.file.originalname,
+            fileSize: req.file.size,
+            firstLine: firstLine,
+            firstHeader: firstHeader,
+            headers: firstLine.split(',').map(h => ({
+                raw: h,
+                cleaned: h.replace(/^\uFEFF/, '').trim(),
+                charCode0: h.charCodeAt(0),
+                hex0: '0x' + h.charCodeAt(0).toString(16)
+            })),
+            charAnalysis,
+            bufferPreview: buffer.slice(0, 50).toString('hex')
+        });
+        
+    } catch (error) {
+        console.error('Debug error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 
 module.exports = router;

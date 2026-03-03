@@ -83,4 +83,15 @@ router.put(
  // analysisController.getAllLotsAdmin
 //);
 
+// routes/analysis.routes.js - Ajoutez cette route
+
+/**
+ * GET /analysis/debug/:fileId - Debug un fichier CSV
+ */
+router.get(
+  "/debug/:fileId",
+  authenticateUser,
+  analysisController.debugCSVFile
+);
+
 module.exports = router;
